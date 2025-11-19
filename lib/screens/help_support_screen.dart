@@ -183,6 +183,8 @@ class HelpSupportScreen extends StatelessWidget {
           question,
           style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
         ),
+        collapsedBackgroundColor: Colors.grey.shade50,
+        backgroundColor: Colors.grey.shade50,
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -195,8 +197,6 @@ class HelpSupportScreen extends StatelessWidget {
             ),
           ),
         ],
-        collapsedBackgroundColor: Colors.grey.shade50,
-        backgroundColor: Colors.grey.shade50,
       ),
     );
   }

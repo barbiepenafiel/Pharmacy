@@ -10,12 +10,12 @@ class AuthService {
 
   AuthService._internal();
 
-  // Backend URL - use 10.0.2.2 for Android emulator, localhost for web
+  // Backend URL - use local IP for emulator/real device, localhost for web
   static String get baseUrl {
     // For web (Chrome, Firefox, etc), use localhost
-    // For Android emulator, use 10.0.2.2 to access host
+    // For Android emulator or real device, use local IP
     // For iOS simulator, use localhost
-    return 'http://10.0.2.2:3000';
+    return 'http://192.168.1.7:3000';
   }
 
   // In-memory token storage
@@ -52,9 +52,19 @@ class AuthService {
             }),
           )
           .timeout(
-            const Duration(seconds: 5),
-            onTimeout: () => throw Exception('Connection timeout'),
+            const Duration(seconds: 10),
+            onTimeout: () =>
+                throw Exception('Connection timeout - backend not responding'),
           );
+
+      // Check if response is valid JSON
+      if (response.body.isEmpty) {
+        return (
+          success: false,
+          message: 'Server returned empty response',
+          fullName: null,
+        );
+      }
 
       final Map<String, dynamic> responseData = jsonDecode(response.body);
 
@@ -67,7 +77,7 @@ class AuthService {
           'id': responseData['user']['id'].toString(),
           'email': responseData['user']['email'],
           'fullName': responseData['user']['fullName'],
-          'isAdmin': responseData['user']['email'] == 'admin@pharmacy.com',
+          'isAdmin': responseData['user']['isAdmin'] ?? false,
         };
 
         return (
@@ -78,10 +88,18 @@ class AuthService {
       } else {
         return (
           success: false,
-          message: responseData['message'] as String? ?? 'Login failed',
+          message:
+              responseData['message'] as String? ?? 'Invalid email or password',
           fullName: null,
         );
       }
+    } on FormatException {
+      return (
+        success: false,
+        message:
+            'Server returned invalid data. Please check backend is running on $baseUrl',
+        fullName: null,
+      );
     } catch (e) {
       return (
         success: false,

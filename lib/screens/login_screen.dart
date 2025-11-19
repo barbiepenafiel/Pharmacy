@@ -51,10 +51,17 @@ class _LoginScreenState extends State<LoginScreen> {
           });
         }
       }
+    } on FormatException {
+      if (mounted) {
+        setState(() {
+          _errorMessage =
+              'Invalid response from server. Please check backend connection.';
+        });
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _errorMessage = 'An error occurred. Please try again.';
+          _errorMessage = 'Error: ${e.toString()}';
         });
       }
     } finally {

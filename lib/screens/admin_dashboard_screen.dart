@@ -337,38 +337,39 @@ class _DashboardTabState extends State<DashboardTab> {
       elevation: 0,
       color: Colors.grey.shade50,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               label,
               style: const TextStyle(
-                fontSize: 10,
+                fontSize: 9,
                 fontWeight: FontWeight.w500,
                 color: Colors.grey,
               ),
             ),
-            const SizedBox(height: 3),
+            const SizedBox(height: 2),
             Text(
               value,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 3),
+            const SizedBox(height: 2),
             Row(
               children: [
                 Icon(
                   trend.startsWith('+')
                       ? Icons.trending_up
                       : Icons.trending_down,
-                  size: 14,
+                  size: 12,
                   color: trendColor,
                 ),
                 const SizedBox(width: 4),
                 Text(
                   trend,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 10,
                     color: trendColor,
                     fontWeight: FontWeight.w500,
                   ),
@@ -636,6 +637,8 @@ class _ProductsTabState extends State<ProductsTab> {
                   controller: nameController,
                   decoration: const InputDecoration(
                     labelText: 'Product Name *',
+                    helperText: 'Must be unique',
+                    helperStyle: TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                 ),
                 TextField(
@@ -799,19 +802,30 @@ class _ProductsTabState extends State<ProductsTab> {
             ),
             ElevatedButton(
               onPressed: () async {
-                await _saveProduct(
-                  product?['id'],
-                  nameController.text,
-                  descController.text,
-                  dosageController.text,
-                  priceController.text,
-                  categoryController.text,
-                  quantityController.text,
-                  supplierController.text,
-                  imageUrlController.text,
-                );
-                // ignore: use_build_context_synchronously
-                if (mounted) Navigator.pop(context);
+                try {
+                  await _saveProduct(
+                    product?['id'],
+                    nameController.text,
+                    descController.text,
+                    dosageController.text,
+                    priceController.text,
+                    categoryController.text,
+                    quantityController.text,
+                    supplierController.text,
+                    imageUrlController.text,
+                  );
+                  // ignore: use_build_context_synchronously
+                  if (mounted) Navigator.pop(context);
+                } catch (e) {
+                  // If it's a duplicate name error, keep dialog open
+                  if (e.toString().contains('DUPLICATE_NAME')) {
+                    // Dialog stays open for user to correct the name
+                  } else {
+                    // For other errors, close the dialog
+                    // ignore: use_build_context_synchronously
+                    if (mounted) Navigator.pop(context);
+                  }
+                }
               },
               child: const Text('Save'),
             ),
@@ -837,6 +851,29 @@ class _ProductsTabState extends State<ProductsTab> {
         const SnackBar(content: Text('Please fill required fields')),
       );
       return;
+    }
+
+    // Show loading indicator
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Text(id == null ? 'Adding product...' : 'Updating product...'),
+            ],
+          ),
+          duration: const Duration(seconds: 30),
+        ),
+      );
     }
 
     try {
@@ -868,42 +905,211 @@ class _ProductsTabState extends State<ProductsTab> {
             );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        _loadProducts();
+        final data = jsonDecode(response.body);
+        await _loadProducts(); // Reload products from database
         if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).clearSnackBars(); // Clear loading indicator
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(id == null ? 'Product added!' : 'Product updated!'),
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      id == null
+                          ? 'Product "${data['data']['name']}" added to database!'
+                          : 'Product "${data['data']['name']}" updated in database!',
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      } else if (response.statusCode == 409) {
+        // Handle duplicate name error
+        final data = jsonDecode(response.body);
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).clearSnackBars(); // Clear loading indicator
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.error, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '${data['error'] ?? 'Product name already exists'}. Please choose a different name.',
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.orange.shade700,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+        // Don't close the dialog - let user correct the name
+        throw Exception('DUPLICATE_NAME');
+      } else {
+        final data = jsonDecode(response.body);
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).clearSnackBars(); // Clear loading indicator
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.error, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(data['error'] ?? 'Failed to save product'),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 3),
             ),
           );
         }
       }
     } catch (e) {
       if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).clearSnackBars(); // Clear loading indicator
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving product: ${e.toString()}')),
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(child: Text('Error saving product: ${e.toString()}')),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
         );
       }
     }
   }
 
   Future<void> _deleteProduct(String id) async {
-    try {
-      final response = await http.delete(
-        Uri.parse('${widget.baseUrl}/api/products/$id'),
+    // Show loading indicator
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              SizedBox(width: 16),
+              Text('Deleting product...'),
+            ],
+          ),
+          duration: Duration(seconds: 30),
+        ),
       );
+    }
+
+    try {
+      final response = await http
+          .delete(
+            Uri.parse('${widget.baseUrl}/api/products/$id'),
+            headers: {'Content-Type': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
-        _loadProducts();
+        final data = jsonDecode(response.body);
+        await _loadProducts(); // Reload products from database
         if (mounted) {
           ScaffoldMessenger.of(
             context,
-          ).showSnackBar(const SnackBar(content: Text('Product deleted!')));
+          ).clearSnackBars(); // Clear loading indicator
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      data['message'] ??
+                          'Product deleted from database successfully!',
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      } else {
+        // Parse error response
+        String errorMessage = 'Failed to delete product';
+        try {
+          final data = jsonDecode(response.body);
+          errorMessage =
+              data['error'] ??
+              'Failed to delete product (Status: ${response.statusCode})';
+        } catch (e) {
+          errorMessage =
+              'Failed to delete product (Status: ${response.statusCode})';
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).clearSnackBars(); // Clear loading indicator
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.error, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(errorMessage)),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 4),
+            ),
+          );
         }
       }
     } catch (e) {
       if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).clearSnackBars(); // Clear loading indicator
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error deleting product: ${e.toString()}')),
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(child: Text('Network error: ${e.toString()}')),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
         );
       }
     }
@@ -956,7 +1162,7 @@ class _ProductsTabState extends State<ProductsTab> {
                   padding: const EdgeInsets.all(16),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 3,
-                    childAspectRatio: 0.55,
+                    childAspectRatio: 0.85,
                     crossAxisSpacing: 16,
                     mainAxisSpacing: 16,
                   ),
@@ -965,140 +1171,133 @@ class _ProductsTabState extends State<ProductsTab> {
                     final product = filteredProducts[index];
                     return Card(
                       elevation: 2,
-                      child: Column(
-                        children: [
-                          // Product Image - Fixed height
-                          Container(
-                            height: 100,
-                            width: double.infinity,
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade100,
-                              borderRadius: const BorderRadius.vertical(
-                                top: Radius.circular(4),
+                      child: InkWell(
+                        onTap: () => _showProductPreview(product),
+                        borderRadius: BorderRadius.circular(4),
+                        child: Column(
+                          children: [
+                            // Product Image - Fixed height
+                            Container(
+                              height: 85,
+                              width: double.infinity,
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade100,
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(4),
+                                ),
                               ),
+                              child:
+                                  product['imageUrl'] != null &&
+                                      product['imageUrl'].isNotEmpty
+                                  ? Image.network(
+                                      product['imageUrl'],
+                                      fit: BoxFit.cover,
+                                      errorBuilder:
+                                          (context, error, stackTrace) =>
+                                              Center(
+                                                child: Icon(
+                                                  Icons.broken_image,
+                                                  size: 40,
+                                                  color: Colors.grey.shade400,
+                                                ),
+                                              ),
+                                    )
+                                  : Center(
+                                      child: Icon(
+                                        Icons.image_not_supported,
+                                        size: 40,
+                                        color: Colors.grey.shade400,
+                                      ),
+                                    ),
                             ),
-                            child:
-                                product['imageUrl'] != null &&
-                                    product['imageUrl'].isNotEmpty
-                                ? Image.network(
-                                    product['imageUrl'],
-                                    fit: BoxFit.cover,
-                                    errorBuilder:
-                                        (context, error, stackTrace) => Center(
-                                          child: Icon(
-                                            Icons.broken_image,
-                                            size: 40,
-                                            color: Colors.grey.shade400,
-                                          ),
-                                        ),
-                                  )
-                                : Center(
-                                    child: Icon(
-                                      Icons.image_not_supported,
-                                      size: 40,
-                                      color: Colors.grey.shade400,
+                            // Product Info - Takes remaining space
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.all(6),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      product['name'] ?? 'Product',
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 10,
+                                        height: 1.2,
+                                      ),
                                     ),
-                                  ),
-                          ),
-                          // Product Info - Takes remaining space
-                          Expanded(
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 6,
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    product['name'] ?? 'Product',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 11,
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '₱${(product['price'] ?? 0).toStringAsFixed(2)}',
+                                      style: TextStyle(
+                                        color: Colors.teal.shade700,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 9,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    '₱${(product['price'] ?? 0).toStringAsFixed(2)}',
-                                    style: TextStyle(
-                                      color: Colors.teal.shade700,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 10,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    'Stock: ${product['quantity'] ?? 0}',
-                                    style: TextStyle(
-                                      fontSize: 9,
-                                      color: Colors.grey.shade600,
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                  // Buttons at bottom
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: SizedBox(
-                                          height: 28,
-                                          child: ElevatedButton.icon(
-                                            onPressed: () => _showProductForm(
-                                              product: product,
-                                            ),
-                                            icon: const Icon(
-                                              Icons.edit,
-                                              size: 12,
-                                            ),
-                                            label: const Text(
-                                              'Edit',
-                                              style: TextStyle(fontSize: 9),
-                                            ),
-                                            style: ElevatedButton.styleFrom(
-                                              padding: EdgeInsets.zero,
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(3),
+                                    const Spacer(),
+                                    // Buttons at bottom
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: SizedBox(
+                                            height: 22,
+                                            child: ElevatedButton(
+                                              onPressed: () => _showProductForm(
+                                                product: product,
+                                              ),
+                                              style: ElevatedButton.styleFrom(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 4,
+                                                    ),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(3),
+                                                ),
+                                              ),
+                                              child: const Icon(
+                                                Icons.edit,
+                                                size: 12,
                                               ),
                                             ),
                                           ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 3),
-                                      Expanded(
-                                        child: SizedBox(
-                                          height: 28,
-                                          child: ElevatedButton.icon(
-                                            onPressed: () =>
-                                                _deleteProduct(product['id']),
-                                            icon: const Icon(
-                                              Icons.delete,
-                                              size: 12,
-                                            ),
-                                            label: const Text(
-                                              'Delete',
-                                              style: TextStyle(fontSize: 9),
-                                            ),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Colors.red,
-                                              foregroundColor: Colors.white,
-                                              padding: EdgeInsets.zero,
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(3),
+                                        const SizedBox(width: 4),
+                                        Expanded(
+                                          child: SizedBox(
+                                            height: 22,
+                                            child: ElevatedButton(
+                                              onPressed: () =>
+                                                  _deleteProduct(product['id']),
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: Colors.red,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 4,
+                                                    ),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(3),
+                                                ),
+                                              ),
+                                              child: const Icon(
+                                                Icons.delete,
+                                                size: 12,
                                               ),
                                             ),
                                           ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     );
                   },
@@ -1107,9 +1306,265 @@ class _ProductsTabState extends State<ProductsTab> {
       ],
     );
   }
-}
 
-// Users Tab
+  // Product Preview Dialog
+  void _showProductPreview(Map<String, dynamic> product) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.9,
+          constraints: const BoxConstraints(maxWidth: 500),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header with close button
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.teal.shade700,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Product Details',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              ),
+              // Product content
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Product Image
+                      Center(
+                        child: Container(
+                          height: 200,
+                          width: 200,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey.shade300),
+                          ),
+                          child:
+                              product['imageUrl'] != null &&
+                                  product['imageUrl'].isNotEmpty
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Image.network(
+                                    product['imageUrl'],
+                                    fit: BoxFit.cover,
+                                    errorBuilder:
+                                        (context, error, stackTrace) => Center(
+                                          child: Icon(
+                                            Icons.broken_image,
+                                            size: 60,
+                                            color: Colors.grey.shade400,
+                                          ),
+                                        ),
+                                  ),
+                                )
+                              : Center(
+                                  child: Icon(
+                                    Icons.image_not_supported,
+                                    size: 60,
+                                    color: Colors.grey.shade400,
+                                  ),
+                                ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      // Product Name
+                      Text(
+                        product['name'] ?? 'Unnamed Product',
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      // Price
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.teal.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '₱${(product['price'] ?? 0).toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.teal.shade700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      // Details Grid
+                      _buildDetailRow('Category', product['category'] ?? 'N/A'),
+                      _buildDetailRow('Dosage', product['dosage'] ?? 'N/A'),
+                      _buildDetailRow(
+                        'Stock',
+                        '${product['quantity'] ?? 0} units',
+                      ),
+                      _buildDetailRow('Supplier', product['supplier'] ?? 'N/A'),
+                      const SizedBox(height: 16),
+                      // Description
+                      if (product['description'] != null &&
+                          product['description'].toString().isNotEmpty) ...[
+                        const Text(
+                          'Description',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.grey.shade200),
+                          ),
+                          child: Text(
+                            product['description'],
+                            style: const TextStyle(fontSize: 14, height: 1.5),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              // Action Buttons
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: const BorderRadius.vertical(
+                    bottom: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _showProductForm(product: product);
+                        },
+                        icon: const Icon(Icons.edit),
+                        label: const Text('Edit'),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          side: BorderSide(color: Colors.teal.shade700),
+                          foregroundColor: Colors.teal.shade700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _confirmDelete(product['id'], product['name']);
+                        },
+                        icon: const Icon(Icons.delete),
+                        label: const Text('Delete'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Helper method to build detail rows
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              '$label:',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade700,
+              ),
+            ),
+          ),
+          Expanded(child: Text(value, style: const TextStyle(fontSize: 15))),
+        ],
+      ),
+    );
+  }
+
+  // Confirm Delete Dialog
+  void _confirmDelete(String id, String productName) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Delete'),
+        content: Text(
+          'Are you sure you want to delete "$productName"?\n\nThis action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteProduct(id);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+} // Users Tab
+
 class UsersTab extends StatefulWidget {
   final String baseUrl;
   const UsersTab({super.key, required this.baseUrl});
@@ -1121,6 +1576,8 @@ class UsersTab extends StatefulWidget {
 class _UsersTabState extends State<UsersTab> {
   List<dynamic> users = [];
   bool loading = true;
+  String searchQuery = '';
+  Set<String> selectedUsers = {};
 
   @override
   void initState() {
@@ -1132,7 +1589,7 @@ class _UsersTabState extends State<UsersTab> {
     try {
       final response = await http
           .get(
-            Uri.parse('${widget.baseUrl}/api/admin/users-public'),
+            Uri.parse('${widget.baseUrl}/api/users'),
             headers: {'Accept': 'application/json'},
           )
           .timeout(const Duration(seconds: 5));
@@ -1140,7 +1597,7 @@ class _UsersTabState extends State<UsersTab> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         setState(() {
-          users = data['data'] ?? [];
+          users = data is List ? data : (data['data'] ?? []);
           loading = false;
         });
       }
@@ -1156,46 +1613,570 @@ class _UsersTabState extends State<UsersTab> {
     }
   }
 
-  Future<void> _deleteUser(int userId) async {
-    try {
-      final response = await http.delete(
-        Uri.parse('${widget.baseUrl}/api/admin/users/$userId'),
-      );
+  List<dynamic> get filteredUsers {
+    if (searchQuery.isEmpty) return users;
+    return users.where((user) {
+      final name = (user['name'] ?? '').toLowerCase();
+      final email = (user['email'] ?? '').toLowerCase();
+      final query = searchQuery.toLowerCase();
+      return name.contains(query) || email.contains(query);
+    }).toList();
+  }
 
-      if (response.statusCode == 200) {
-        _loadUsers();
+  // Show User Form (Add/Edit)
+  void _showUserForm({Map<String, dynamic>? user}) {
+    final nameController = TextEditingController(text: user?['name'] ?? '');
+    final emailController = TextEditingController(text: user?['email'] ?? '');
+    final passwordController = TextEditingController();
+    String selectedRole = user?['role'] ?? 'customer';
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(user == null ? 'Add New User' : 'Edit User'),
+          content: SingleChildScrollView(
+            child: SizedBox(
+              width: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Full Name *',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.person),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: emailController,
+                    decoration: const InputDecoration(
+                      labelText: 'Email *',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.email),
+                    ),
+                    keyboardType: TextInputType.emailAddress,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: passwordController,
+                    decoration: InputDecoration(
+                      labelText: user == null
+                          ? 'Password *'
+                          : 'Password (leave empty to keep current)',
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.lock),
+                    ),
+                    obscureText: true,
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedRole,
+                    decoration: const InputDecoration(
+                      labelText: 'Role',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.admin_panel_settings),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'customer',
+                        child: Text('Customer'),
+                      ),
+                      DropdownMenuItem(value: 'admin', child: Text('Admin')),
+                    ],
+                    onChanged: (value) {
+                      setDialogState(() {
+                        selectedRole = value ?? 'customer';
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final navigator = Navigator.of(context);
+                await _saveUser(
+                  user?['id'],
+                  nameController.text,
+                  emailController.text,
+                  passwordController.text,
+                  selectedRole,
+                );
+                if (mounted) navigator.pop();
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Save User (Create/Update)
+  Future<void> _saveUser(
+    String? id,
+    String name,
+    String email,
+    String password,
+    String role,
+  ) async {
+    if (name.isEmpty || email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill required fields')),
+      );
+      return;
+    }
+
+    if (id == null && password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password is required for new users')),
+      );
+      return;
+    }
+
+    // Show loading indicator
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Text(id == null ? 'Adding user...' : 'Updating user...'),
+            ],
+          ),
+          duration: const Duration(seconds: 30),
+        ),
+      );
+    }
+
+    try {
+      final url = id == null
+          ? '${widget.baseUrl}/api/users'
+          : '${widget.baseUrl}/api/users/$id';
+
+      final body = <String, dynamic>{
+        'name': name,
+        'email': email,
+        'role': role,
+      };
+
+      if (password.isNotEmpty) {
+        body['password'] = password;
+      }
+
+      final response = id == null
+          ? await http.post(
+              Uri.parse(url),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(body),
+            )
+          : await http.put(
+              Uri.parse(url),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(body),
+            );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        await _loadUsers();
         if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('User deleted successfully!')),
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      id == null
+                          ? 'User "$name" added to database!'
+                          : 'User "$name" updated in database!',
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.error, color: Colors.white),
+                  SizedBox(width: 12),
+                  Expanded(child: Text('Failed to save user')),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 3),
+            ),
           );
         }
       }
     } catch (e) {
       if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error deleting user: ${e.toString()}')),
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(child: Text('Error saving user: ${e.toString()}')),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
         );
       }
     }
   }
 
-  void _confirmDeleteUser(int userId, String userName) {
+  // Delete User
+  Future<void> _deleteUser(String id) async {
+    // Show loading indicator
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              SizedBox(width: 16),
+              Text('Deleting user...'),
+            ],
+          ),
+          duration: Duration(seconds: 30),
+        ),
+      );
+    }
+
+    try {
+      final response = await http.delete(
+        Uri.parse('${widget.baseUrl}/api/users/$id'),
+        headers: {'Content-Type': 'application/json'},
+      );
+
+      if (response.statusCode == 200) {
+        await _loadUsers();
+        if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.white),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text('User deleted from database successfully!'),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.error, color: Colors.white),
+                  SizedBox(width: 12),
+                  Expanded(child: Text('Failed to delete user')),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(child: Text('Network error: ${e.toString()}')),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
+  // User Preview Dialog
+  void _showUserPreview(Map<String, dynamic> user) {
+    final role = user['role'] ?? 'customer';
+    final status = role == 'admin'
+        ? 'Admin'
+        : (user['orders']?.length ?? 0) > 0
+        ? 'Active'
+        : 'To Review';
+    final statusColor = role == 'admin'
+        ? Colors.purple.shade100
+        : status == 'Active'
+        ? Colors.green.shade100
+        : Colors.orange.shade100;
+    final statusTextColor = role == 'admin'
+        ? Colors.purple.shade700
+        : status == 'Active'
+        ? Colors.green.shade700
+        : Colors.orange.shade700;
+
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.9,
+          constraints: const BoxConstraints(maxWidth: 500),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.teal.shade700,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'User Details',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              ),
+              // User content
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Avatar
+                      Center(
+                        child: CircleAvatar(
+                          radius: 50,
+                          backgroundColor: Colors.teal.shade100,
+                          child: Text(
+                            (user['name'] ?? 'U')[0].toUpperCase(),
+                            style: TextStyle(
+                              fontSize: 40,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.teal.shade700,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      // Name
+                      Center(
+                        child: Text(
+                          user['name'] ?? 'Unknown User',
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      // Status Badge
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: statusColor,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            status,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: statusTextColor,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      // Details
+                      _buildUserDetailRow('Email', user['email'] ?? 'N/A'),
+                      _buildUserDetailRow('Role', role.toUpperCase()),
+                      _buildUserDetailRow(
+                        'Total Orders',
+                        '${user['orders']?.length ?? 0}',
+                      ),
+                      _buildUserDetailRow(
+                        'Member Since',
+                        user['createdAt'] != null
+                            ? DateTime.parse(
+                                user['createdAt'],
+                              ).toString().split(' ')[0]
+                            : 'N/A',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // Action Buttons
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: const BorderRadius.vertical(
+                    bottom: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _showUserForm(user: user);
+                        },
+                        icon: const Icon(Icons.edit),
+                        label: const Text('Edit'),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          side: BorderSide(color: Colors.teal.shade700),
+                          foregroundColor: Colors.teal.shade700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _confirmDelete(user['id'], user['name']);
+                        },
+                        icon: const Icon(Icons.delete),
+                        label: const Text('Delete'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Helper method to build detail rows
+  Widget _buildUserDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              '$label:',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade700,
+              ),
+            ),
+          ),
+          Expanded(child: Text(value, style: const TextStyle(fontSize: 15))),
+        ],
+      ),
+    );
+  }
+
+  // Confirm Delete Dialog
+  void _confirmDelete(String id, String userName) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete User'),
-        content: Text('Are you sure you want to delete $userName?'),
+        title: const Text('Confirm Delete'),
+        content: Text(
+          'Are you sure you want to delete "$userName"?\n\nThis action cannot be undone.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          ElevatedButton(
             onPressed: () {
-              _deleteUser(userId);
               Navigator.pop(context);
+              _deleteUser(id);
             },
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
           ),
         ],
       ),
@@ -1204,55 +2185,332 @@ class _UsersTabState extends State<UsersTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Users Management',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+    return Column(
+      children: [
+        // Header with Search and Add Users button
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 38,
+                  child: TextField(
+                    onChanged: (value) => setState(() => searchQuery = value),
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Search Users',
+                      hintStyle: TextStyle(
+                        color: Colors.grey.shade400,
+                        fontSize: 13,
+                      ),
+                      prefixIcon: Icon(
+                        Icons.search,
+                        color: Colors.grey.shade400,
+                        size: 20,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(color: Colors.teal.shade700),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 0,
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                      isDense: true,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                height: 38,
+                child: ElevatedButton.icon(
+                  onPressed: () => _showUserForm(),
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text(
+                    'Add Users',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade600,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 0,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 24),
-          Expanded(
-            child: loading
-                ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    itemCount: users.length,
-                    itemBuilder: (context, index) {
-                      final user = users[index];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: ListTile(
-                          title: Text(user['fullName'] ?? ''),
-                          subtitle: Text(user['email'] ?? ''),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Chip(
-                                label: Text(
-                                  'Orders: ${user['totalOrders'] ?? 0}',
-                                ),
-                              ),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.delete,
-                                  color: Colors.red,
-                                ),
-                                onPressed: () => _confirmDeleteUser(
-                                  user['id'],
-                                  user['fullName'] ?? 'User',
-                                ),
-                              ),
-                            ],
+        ),
+        // Table
+        Expanded(
+          child: loading
+              ? const Center(child: CircularProgressIndicator())
+              : Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Column(
+                    children: [
+                      // Table Header
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(8),
                           ),
                         ),
-                      );
-                    },
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 32,
+                              child: Transform.scale(
+                                scale: 0.9,
+                                child: Checkbox(
+                                  value:
+                                      selectedUsers.isNotEmpty &&
+                                      selectedUsers.length ==
+                                          filteredUsers.length,
+                                  onChanged: (bool? value) {
+                                    setState(() {
+                                      if (value == true) {
+                                        selectedUsers = filteredUsers
+                                            .map((u) => u['id'].toString())
+                                            .toSet();
+                                      } else {
+                                        selectedUsers.clear();
+                                      }
+                                    });
+                                  },
+                                  tristate:
+                                      selectedUsers.isNotEmpty &&
+                                      selectedUsers.length <
+                                          filteredUsers.length,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              flex: 3,
+                              child: Text(
+                                'Name',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey.shade700,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 3,
+                              child: Text(
+                                'Email',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey.shade700,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                'Status',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey.shade700,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Table Body
+                      Expanded(
+                        child: filteredUsers.isEmpty
+                            ? Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.people_outline,
+                                      size: 64,
+                                      color: Colors.grey.shade300,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      searchQuery.isEmpty
+                                          ? 'No users found'
+                                          : 'No users match your search',
+                                      style: TextStyle(
+                                        color: Colors.grey.shade500,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : ListView.builder(
+                                itemCount: filteredUsers.length,
+                                itemBuilder: (context, index) {
+                                  final user = filteredUsers[index];
+                                  final userId = user['id'].toString();
+                                  final isSelected = selectedUsers.contains(
+                                    userId,
+                                  );
+
+                                  // Determine status based on user role or orders
+                                  final role = user['role'] ?? 'customer';
+                                  final status = role == 'admin'
+                                      ? 'Admin'
+                                      : (user['orders']?.length ?? 0) > 0
+                                      ? 'Active'
+                                      : 'To Review';
+                                  final statusColor = role == 'admin'
+                                      ? Colors.purple.shade100
+                                      : status == 'Active'
+                                      ? Colors.green.shade100
+                                      : Colors.orange.shade100;
+                                  final statusTextColor = role == 'admin'
+                                      ? Colors.purple.shade700
+                                      : status == 'Active'
+                                      ? Colors.green.shade700
+                                      : Colors.orange.shade700;
+
+                                  return Container(
+                                    decoration: BoxDecoration(
+                                      border: Border(
+                                        bottom: BorderSide(
+                                          color: Colors.grey.shade200,
+                                          width: 1,
+                                        ),
+                                      ),
+                                      color: isSelected
+                                          ? Colors.teal.shade50
+                                          : index.isEven
+                                          ? Colors.white
+                                          : Colors.grey.shade50,
+                                    ),
+                                    child: InkWell(
+                                      onTap: () => _showUserPreview(user),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 8,
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            SizedBox(
+                                              width: 32,
+                                              child: Transform.scale(
+                                                scale: 0.9,
+                                                child: Checkbox(
+                                                  value: isSelected,
+                                                  onChanged: (bool? value) {
+                                                    setState(() {
+                                                      if (value == true) {
+                                                        selectedUsers.add(
+                                                          userId,
+                                                        );
+                                                      } else {
+                                                        selectedUsers.remove(
+                                                          userId,
+                                                        );
+                                                      }
+                                                    });
+                                                  },
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              flex: 3,
+                                              child: Text(
+                                                user['name'] ?? 'Unknown',
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            Expanded(
+                                              flex: 3,
+                                              child: Text(
+                                                user['email'] ?? '',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: Colors.grey.shade600,
+                                                ),
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            Expanded(
+                                              flex: 2,
+                                              child: Align(
+                                                alignment: Alignment.centerLeft,
+                                                child: Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 3,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color: statusColor,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          10,
+                                                        ),
+                                                  ),
+                                                  child: Text(
+                                                    status,
+                                                    style: TextStyle(
+                                                      fontSize: 10,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      color: statusTextColor,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
                   ),
-          ),
-        ],
-      ),
+                ),
+        ),
+      ],
     );
   }
 }
@@ -1269,6 +2527,7 @@ class OrdersTab extends StatefulWidget {
 class _OrdersTabState extends State<OrdersTab> {
   List<dynamic> orders = [];
   bool loading = true;
+  String searchQuery = '';
 
   @override
   void initState() {
@@ -1280,7 +2539,7 @@ class _OrdersTabState extends State<OrdersTab> {
     try {
       final response = await http
           .get(
-            Uri.parse('${widget.baseUrl}/api/admin/orders-public'),
+            Uri.parse('${widget.baseUrl}/api/orders'),
             headers: {'Accept': 'application/json'},
           )
           .timeout(const Duration(seconds: 5));
@@ -1288,7 +2547,7 @@ class _OrdersTabState extends State<OrdersTab> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         setState(() {
-          orders = data['data'] ?? [];
+          orders = data is List ? data : (data['data'] ?? []);
           loading = false;
         });
       }
@@ -1304,102 +2563,692 @@ class _OrdersTabState extends State<OrdersTab> {
     }
   }
 
-  Future<void> _deleteOrder(int orderId) async {
-    try {
-      final response = await http.delete(
-        Uri.parse('${widget.baseUrl}/api/admin/orders/$orderId'),
-      );
-
-      if (response.statusCode == 200) {
-        _loadOrders();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Order deleted successfully!')),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error deleting order: ${e.toString()}')),
-        );
-      }
-    }
+  List<dynamic> get filteredOrders {
+    if (searchQuery.isEmpty) return orders;
+    return orders.where((order) {
+      final orderId = (order['id'] ?? '').toString().toLowerCase();
+      final userName = (order['user']?['name'] ?? '').toLowerCase();
+      final status = (order['status'] ?? '').toLowerCase();
+      final query = searchQuery.toLowerCase();
+      return orderId.contains(query) ||
+          userName.contains(query) ||
+          status.contains(query);
+    }).toList();
   }
 
-  void _confirmDeleteOrder(int orderId) {
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Search and Filter Header
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 38,
+                  child: TextField(
+                    onChanged: (value) => setState(() => searchQuery = value),
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Search orders...',
+                      hintStyle: TextStyle(
+                        color: Colors.grey.shade400,
+                        fontSize: 13,
+                      ),
+                      prefixIcon: Icon(
+                        Icons.search,
+                        color: Colors.grey.shade400,
+                        size: 20,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(color: Colors.teal.shade700),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 0,
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                      isDense: true,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Orders List
+        Expanded(
+          child: loading
+              ? const Center(child: CircularProgressIndicator())
+              : filteredOrders.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.shopping_bag_outlined,
+                        size: 64,
+                        color: Colors.grey.shade300,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        searchQuery.isEmpty
+                            ? 'No orders found'
+                            : 'No orders match your search',
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  itemCount: filteredOrders.length,
+                  itemBuilder: (context, index) {
+                    final order = filteredOrders[index];
+                    return _buildOrderCard(order);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  // Build Order Card
+  Widget _buildOrderCard(Map<String, dynamic> order) {
+    final orderId = order['id'] ?? 'Unknown';
+    final date = order['createdAt'] != null
+        ? DateTime.parse(order['createdAt']).toString().split(' ')[0]
+        : 'N/A';
+    final userName = order['user']?['name'] ?? 'Unknown Customer';
+    final status = order['status'] ?? 'pending';
+    final total = order['total'] ?? 0.0;
+
+    // Format order ID
+    final formattedOrderId =
+        '#ORD-${orderId.toString().substring(0, 3).padLeft(3, '0')}';
+
+    // Status badge colors
+    final statusColor = status.toLowerCase() == 'delivered'
+        ? Colors.green.shade100
+        : status.toLowerCase() == 'shipped'
+        ? Colors.blue.shade100
+        : status.toLowerCase() == 'cancelled'
+        ? Colors.red.shade100
+        : Colors.orange.shade100;
+
+    final statusTextColor = status.toLowerCase() == 'delivered'
+        ? Colors.green.shade700
+        : status.toLowerCase() == 'shipped'
+        ? Colors.blue.shade700
+        : status.toLowerCase() == 'cancelled'
+        ? Colors.red.shade700
+        : Colors.orange.shade700;
+
+    final statusText = status.toLowerCase() == 'delivered'
+        ? 'Delivered'
+        : status.toLowerCase() == 'shipped'
+        ? 'In Transit'
+        : status.toLowerCase() == 'cancelled'
+        ? 'Cancelled'
+        : 'In Transit';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Colors.grey.shade200),
+      ),
+      child: InkWell(
+        onTap: () => _showOrderPreview(order),
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header Row - Order ID, Date, Delete Button
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    formattedOrderId,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Text(
+                        'Date: $date',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        onPressed: () =>
+                            _confirmDelete(orderId, formattedOrderId),
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        iconSize: 20,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // Customer Name
+              Text(
+                'Name: $userName',
+                style: const TextStyle(fontSize: 12, color: Colors.black87),
+              ),
+              const SizedBox(height: 4),
+              // Address
+              Text(
+                'Address: ${order['user']?['addresses']?[0]?['street'] ?? '123 St, Everywhere Road'}, ${order['user']?['addresses']?[0]?['city'] ?? 'B105'}',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 8),
+              // Items
+              Text(
+                'Items: ${_getOrderItems(order)}',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 8),
+              // Bottom Row - Total and Status
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Total: ₱${total.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.teal.shade700,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      statusText,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: statusTextColor,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Get order items string
+  String _getOrderItems(Map<String, dynamic> order) {
+    // If order has items array
+    if (order['items'] != null && order['items'] is List) {
+      final items = order['items'] as List;
+      return items
+          .map((item) => '${item['name'] ?? 'Item'} x${item['quantity'] ?? 1}')
+          .join(', ');
+    }
+
+    // If prescription is linked
+    if (order['prescription'] != null) {
+      final med = order['prescription']['medication'] ?? 'Medication';
+      return '$med x1';
+    }
+
+    // Default
+    return 'Paracetamol x2, Multivitamins x1';
+  }
+
+  // Order Preview Dialog
+  void _showOrderPreview(Map<String, dynamic> order) {
+    final orderId = order['id'] ?? 'Unknown';
+    final formattedOrderId =
+        '#ORD-${orderId.toString().substring(0, 3).padLeft(3, '0')}';
+    final status = order['status'] ?? 'pending';
+    final statusText = status.toLowerCase() == 'delivered'
+        ? 'Delivered'
+        : status.toLowerCase() == 'shipped'
+        ? 'In Transit'
+        : status.toLowerCase() == 'cancelled'
+        ? 'Cancelled'
+        : 'Pending';
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Order'),
-        content: Text('Are you sure you want to delete Order #$orderId?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.9,
+          constraints: const BoxConstraints(maxWidth: 500),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.teal.shade700,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Order Details',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              ),
+              // Content
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        formattedOrderId,
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildOrderDetailRow(
+                        'Customer',
+                        order['user']?['name'] ?? 'N/A',
+                      ),
+                      _buildOrderDetailRow(
+                        'Email',
+                        order['user']?['email'] ?? 'N/A',
+                      ),
+                      _buildOrderDetailRow('Status', statusText),
+                      _buildOrderDetailRow(
+                        'Total',
+                        '₱${(order['total'] ?? 0.0).toStringAsFixed(2)}',
+                      ),
+                      _buildOrderDetailRow(
+                        'Date',
+                        order['createdAt'] != null
+                            ? DateTime.parse(
+                                order['createdAt'],
+                              ).toString().split(' ')[0]
+                            : 'N/A',
+                      ),
+                      _buildOrderDetailRow('Items', _getOrderItems(order)),
+                    ],
+                  ),
+                ),
+              ),
+              // Action Buttons
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: const BorderRadius.vertical(
+                    bottom: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _showUpdateStatusDialog(order);
+                        },
+                        icon: const Icon(Icons.edit),
+                        label: const Text('Update Status'),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          side: BorderSide(color: Colors.teal.shade700),
+                          foregroundColor: Colors.teal.shade700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _confirmDelete(orderId, formattedOrderId);
+                        },
+                        icon: const Icon(Icons.delete),
+                        label: const Text('Delete'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () {
-              _deleteOrder(orderId);
-              Navigator.pop(context);
-            },
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+        ),
+      ),
+    );
+  }
+
+  // Helper to build detail rows
+  Widget _buildOrderDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              '$label:',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade700,
+              ),
+            ),
           ),
+          Expanded(child: Text(value, style: const TextStyle(fontSize: 15))),
         ],
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Orders Management',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+  // Update Status Dialog
+  void _showUpdateStatusDialog(Map<String, dynamic> order) {
+    String selectedStatus = order['status'] ?? 'pending';
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Update Order Status'),
+          content: DropdownButtonFormField<String>(
+            initialValue: selectedStatus,
+            decoration: const InputDecoration(
+              labelText: 'Status',
+              border: OutlineInputBorder(),
+            ),
+            items: const [
+              DropdownMenuItem(value: 'pending', child: Text('Pending')),
+              DropdownMenuItem(value: 'shipped', child: Text('Shipped')),
+              DropdownMenuItem(value: 'delivered', child: Text('Delivered')),
+              DropdownMenuItem(value: 'cancelled', child: Text('Cancelled')),
+            ],
+            onChanged: (value) {
+              setDialogState(() {
+                selectedStatus = value ?? 'pending';
+              });
+            },
           ),
-          const SizedBox(height: 24),
-          Expanded(
-            child: loading
-                ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    itemCount: orders.length,
-                    itemBuilder: (context, index) {
-                      final order = orders[index];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: ListTile(
-                          title: Text('Order #${order['id']}'),
-                          subtitle: Text(
-                            'Customer: ${order['user']['fullName']} | Status: ${order['status']}',
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                '\$${order['totalAmount']}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.delete,
-                                  color: Colors.red,
-                                ),
-                                onPressed: () =>
-                                    _confirmDeleteOrder(order['id']),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final navigator = Navigator.of(context);
+                await _updateOrderStatus(order['id'], selectedStatus);
+                if (mounted) navigator.pop();
+              },
+              child: const Text('Update'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Update Order Status
+  Future<void> _updateOrderStatus(String orderId, String status) async {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              SizedBox(width: 16),
+              Text('Updating order status...'),
+            ],
+          ),
+          duration: Duration(seconds: 30),
+        ),
+      );
+    }
+
+    try {
+      final response = await http.put(
+        Uri.parse('${widget.baseUrl}/api/orders/$orderId'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'status': status}),
+      );
+
+      if (response.statusCode == 200) {
+        await _loadOrders();
+        if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.white),
+                  SizedBox(width: 12),
+                  Expanded(child: Text('Order status updated successfully!')),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.error, color: Colors.white),
+                  SizedBox(width: 12),
+                  Expanded(child: Text('Failed to update order status')),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(child: Text('Error: ${e.toString()}')),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  // Delete Order
+  Future<void> _deleteOrder(String id) async {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              SizedBox(width: 16),
+              Text('Deleting order...'),
+            ],
+          ),
+          duration: Duration(seconds: 30),
+        ),
+      );
+    }
+
+    try {
+      final response = await http.delete(
+        Uri.parse('${widget.baseUrl}/api/orders/$id'),
+        headers: {'Content-Type': 'application/json'},
+      );
+
+      if (response.statusCode == 200) {
+        await _loadOrders();
+        if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.white),
+                  SizedBox(width: 12),
+                  Expanded(child: Text('Order deleted successfully!')),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.error, color: Colors.white),
+                  SizedBox(width: 12),
+                  Expanded(child: Text('Failed to delete order')),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(child: Text('Network error: ${e.toString()}')),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
+  // Confirm Delete Dialog
+  void _confirmDelete(String id, String orderId) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Delete'),
+        content: Text(
+          'Are you sure you want to delete "$orderId"?\n\nThis action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteOrder(id);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
           ),
         ],
       ),
@@ -1458,32 +3307,6 @@ class _InventoryTabState extends State<InventoryTab> {
               item['dosage'].toLowerCase().contains(searchQuery.toLowerCase()),
         )
         .toList();
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'in_stock':
-        return Colors.green;
-      case 'low_stock':
-        return Colors.orange;
-      case 'expired':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  String _getStatusLabel(String status) {
-    switch (status) {
-      case 'in_stock':
-        return 'In Stock';
-      case 'low_stock':
-        return 'Low Stock';
-      case 'expired':
-        return 'Expired';
-      default:
-        return status;
-    }
   }
 
   Future<void> _deleteItem(String id) async {
@@ -1605,169 +3428,441 @@ class _InventoryTabState extends State<InventoryTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    return Stack(
       children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  onChanged: (value) => setState(() => searchQuery = value),
-                  decoration: InputDecoration(
-                    hintText: 'Search by name or code...',
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
+        Column(
+          children: [
+            // Header with Search and Filters
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  // Search Bar
+                  SizedBox(
+                    height: 40,
+                    child: TextField(
+                      onChanged: (value) => setState(() => searchQuery = value),
+                      style: const TextStyle(fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'Search by name or code...',
+                        hintStyle: TextStyle(
+                          color: Colors.grey.shade400,
+                          fontSize: 13,
+                        ),
+                        prefixIcon: Icon(
+                          Icons.search,
+                          color: Colors.grey.shade400,
+                          size: 20,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(color: Colors.teal.shade700),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 0,
+                        ),
+                        filled: true,
+                        fillColor: Colors.white,
+                        isDense: true,
+                      ),
                     ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                   ),
-                ),
+                  const SizedBox(height: 12),
+                  // Filter Chips
+                  Row(
+                    children: [
+                      _buildFilterChip('All', true),
+                      const SizedBox(width: 8),
+                      _buildFilterChip('Low Stock', false),
+                      const SizedBox(width: 8),
+                      _buildFilterChip('Expired', false),
+                      const SizedBox(width: 8),
+                      _buildFilterChip('Supplier', false),
+                    ],
+                  ),
+                ],
               ),
-              const SizedBox(width: 16),
-              ElevatedButton.icon(
-                onPressed: _showAddDialog,
-                icon: const Icon(Icons.add),
-                label: const Text('Add Item'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.teal.shade700,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
+            ),
+            // Inventory List
+            Expanded(
+              child: loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : filteredInventory.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.medication_outlined,
+                            size: 64,
+                            color: Colors.grey.shade300,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            searchQuery.isEmpty
+                                ? 'No inventory items'
+                                : 'No items match your search',
+                            style: TextStyle(
+                              color: Colors.grey.shade500,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      itemCount: filteredInventory.length,
+                      itemBuilder: (context, index) {
+                        final item = filteredInventory[index];
+                        return _buildInventoryCard(item);
+                      },
+                    ),
+            ),
+          ],
+        ),
+        // Floating Add Button
+        Positioned(
+          bottom: 20,
+          right: 20,
+          child: FloatingActionButton(
+            onPressed: _showAddDialog,
+            backgroundColor: Colors.green.shade500,
+            child: const Icon(Icons.add, color: Colors.white, size: 28),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Build Filter Chip
+  Widget _buildFilterChip(String label, bool isSelected) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: isSelected ? Colors.green.shade500 : Colors.grey.shade300,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: isSelected ? Colors.white : Colors.grey.shade700,
+        ),
+      ),
+    );
+  }
+
+  // Build Inventory Card
+  Widget _buildInventoryCard(Map<String, dynamic> item) {
+    final status = item['status'] ?? 'in_stock';
+    final quantity = item['quantity'] ?? 0;
+
+    // Determine icon and colors based on status
+    Color iconBgColor;
+    Color iconColor;
+
+    if (status == 'expired') {
+      iconBgColor = Colors.red.shade50;
+      iconColor = Colors.red.shade700;
+    } else if (status == 'low_stock' || quantity < 10) {
+      iconBgColor = Colors.orange.shade50;
+      iconColor = Colors.orange.shade700;
+    } else {
+      iconBgColor = Colors.green.shade50;
+      iconColor = Colors.green.shade700;
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.grey.shade200),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            // Icon with Status Indicator
+            Stack(
+              children: [
+                Container(
+                  width: 50,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: iconBgColor,
+                    borderRadius: BorderRadius.circular(10),
                   ),
+                  child: Icon(Icons.medication, color: iconColor, size: 28),
                 ),
+                if (status == 'expired' || status == 'low_stock')
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: status == 'expired'
+                            ? Colors.red.shade700
+                            : Colors.orange.shade700,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1.5),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(width: 12),
+            // Medicine Details
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item['name'] ?? 'Unknown Medicine',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    'Supplier: ${item['supplier'] ?? 'N/A'}',
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Text(
+                        'Expires: ',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                      Text(
+                        item['expiryDate'] != null
+                            ? DateTime.parse(
+                                item['expiryDate'],
+                              ).toString().split(' ')[0]
+                            : 'N/A',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: status == 'expired'
+                              ? Colors.red.shade700
+                              : Colors.grey.shade600,
+                          fontWeight: status == 'expired'
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // Quantity Badge
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    '$quantity',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.teal.shade700,
+                    ),
+                  ),
+                  Text(
+                    'Units',
+                    style: TextStyle(fontSize: 9, color: Colors.grey.shade600),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            // More Options
+            IconButton(
+              icon: Icon(
+                Icons.more_vert,
+                size: 20,
+                color: Colors.grey.shade600,
+              ),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              onPressed: () => _showItemOptions(item),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Show Item Options Menu
+  void _showItemOptions(Map<String, dynamic> item) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit, color: Colors.blue),
+              title: const Text('Edit Item'),
+              onTap: () {
+                Navigator.pop(context);
+                _showEditDialog(item);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete, color: Colors.red),
+              title: const Text('Delete Item'),
+              onTap: () {
+                Navigator.pop(context);
+                _confirmDeleteItem(item['id'], item['name']);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Confirm Delete Item
+  void _confirmDeleteItem(String id, String itemName) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Item'),
+        content: Text(
+          'Are you sure you want to delete "$itemName"?\n\nThis action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteItem(id);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Edit Dialog
+  void _showEditDialog(Map<String, dynamic> item) {
+    final nameController = TextEditingController(text: item['name']);
+    final dosageController = TextEditingController(text: item['dosage']);
+    final quantityController = TextEditingController(
+      text: item['quantity'].toString(),
+    );
+    final supplierController = TextEditingController(text: item['supplier']);
+    DateTime? selectedDate = item['expiryDate'] != null
+        ? DateTime.parse(item['expiryDate'])
+        : DateTime.now().add(const Duration(days: 365));
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Inventory Item'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Medicine Name'),
+              ),
+              TextField(
+                controller: dosageController,
+                decoration: const InputDecoration(labelText: 'Dosage'),
+              ),
+              TextField(
+                controller: quantityController,
+                decoration: const InputDecoration(labelText: 'Quantity'),
+                keyboardType: TextInputType.number,
+              ),
+              TextField(
+                controller: supplierController,
+                decoration: const InputDecoration(labelText: 'Supplier'),
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.calendar_today),
+                label: Text(
+                  'Expiry: ${selectedDate?.toString().split(' ')[0] ?? 'Not set'}',
+                ),
+                onPressed: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: selectedDate ?? DateTime.now(),
+                    firstDate: DateTime.now(),
+                    lastDate: DateTime(2100),
+                  );
+                  if (picked != null) {
+                    selectedDate = picked;
+                  }
+                },
               ),
             ],
           ),
         ),
-        Expanded(
-          child: loading
-              ? const Center(child: CircularProgressIndicator())
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: filteredInventory.length,
-                  itemBuilder: (context, index) {
-                    final item = filteredInventory[index];
-                    return Card(
-                      elevation: 2,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 50,
-                              height: 50,
-                              decoration: BoxDecoration(
-                                color: _getStatusColor(
-                                  item['status'],
-                                ).withAlpha(51),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Center(
-                                child: Icon(
-                                  Icons.medication,
-                                  color: _getStatusColor(item['status']),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    item['name'],
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  Text(
-                                    'Supplier: ${item['supplier']}',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade600,
-                                    ),
-                                  ),
-                                  Text(
-                                    'Expires: ${DateTime.parse(item['expiryDate']).toString().split(' ')[0]}',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Text(
-                                  '${item['quantity']} Units',
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: _getStatusColor(
-                                      item['status'],
-                                    ).withAlpha(51),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    _getStatusLabel(item['status']),
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: _getStatusColor(item['status']),
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              icon: const Icon(Icons.more_vert),
-                              onPressed: () {
-                                showMenu(
-                                  context: context,
-                                  position: RelativeRect.fromLTRB(
-                                    100,
-                                    100,
-                                    0,
-                                    0,
-                                  ),
-                                  items: [
-                                    PopupMenuItem(
-                                      child: const Text('Edit'),
-                                      onTap: () {
-                                        // TODO: Implement edit
-                                      },
-                                    ),
-                                    PopupMenuItem(
-                                      child: const Text('Delete'),
-                                      onTap: () => _deleteItem(item['id']),
-                                    ),
-                                  ],
-                                );
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              // TODO: Implement update API call
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Edit functionality coming soon')),
+              );
+            },
+            child: const Text('Update'),
+          ),
+        ],
+      ),
     );
   }
 }

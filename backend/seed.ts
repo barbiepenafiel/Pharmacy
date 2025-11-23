@@ -134,14 +134,16 @@ async function main() {
       },
     ]
 
-    // Create or update products
+    // Delete existing products and create fresh
+    await prisma.product.deleteMany({})
+    console.log('Cleared existing products')
+    
+    // Create products
     for (const product of products) {
-      await prisma.product.upsert({
-        where: { name: product.name },
-        update: product,
-        create: product,
+      await prisma.product.create({
+        data: product,
       })
-      console.log(`Product "${product.name}" created/updated`)
+      console.log(`Product "${product.name}" created`)
     }
 
     console.log('✅ All products seeded successfully!')

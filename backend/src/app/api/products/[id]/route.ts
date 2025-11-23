@@ -3,11 +3,12 @@ import { prisma } from '@/lib/prisma'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const product = await prisma.product.findUnique({
-      where: { id: params.id },
+      where: { id },
     })
 
     if (!product) {
@@ -32,16 +33,56 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const body = await request.json()
     const { name, description, dosage, category, price, imageUrl, quantity, supplier } = body
 
+    // If name is being updated, check for duplicates
+    if (name) {
+      const trimmedName = name.trim()
+
+      // Check if another product already has this name (case-insensitive)
+      const existingProduct = await prisma.product.findFirst({
+        where: {
+          name: {
+            equals: trimmedName,
+            mode: 'insensitive',
+          },
+          NOT: {
+            id: id, // Exclude the current product being updated
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          category: true,
+        },
+      })
+
+      if (existingProduct) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Product name '${existingProduct.name}' is already used by another product`,
+            code: 'DUPLICATE_NAME',
+            existingProduct: {
+              id: existingProduct.id,
+              name: existingProduct.name,
+              category: existingProduct.category,
+            },
+          },
+          { status: 409 }
+        )
+      }
+    }
+
     const product = await prisma.product.update({
-      where: { id: params.id },
+      where: { id },
       data: {
-        name,
+        name: name ? name.trim() : undefined,
         description,
         dosage,
         category,
@@ -56,8 +97,21 @@ export async function PUT(
       success: true,
       data: product,
     })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error updating product:', error)
+    
+    // Handle Prisma unique constraint violation
+    if (error.code === 'P2002') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Product name already exists',
+          code: 'DUPLICATE_NAME',
+        },
+        { status: 409 }
+      )
+    }
+
     return NextResponse.json(
       { success: false, error: 'Failed to update product' },
       { status: 500 }
@@ -67,21 +121,41 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await prisma.product.delete({
-      where: { id: params.id },
+    const { id } = await params
+    console.log('🗑️ DELETE request for product ID:', id)
+    
+    // First check if product exists
+    const existingProduct = await prisma.product.findUnique({
+      where: { id },
     })
 
+    if (!existingProduct) {
+      console.log('❌ Product not found:', id)
+      return NextResponse.json(
+        { success: false, error: 'Product not found' },
+        { status: 404 }
+      )
+    }
+
+    console.log('✅ Product found, deleting:', existingProduct.name)
+    
+    await prisma.product.delete({
+      where: { id },
+    })
+
+    console.log('✅ Product deleted successfully')
+    
     return NextResponse.json({
       success: true,
       message: 'Product deleted',
     })
   } catch (error) {
-    console.error('Error deleting product:', error)
+    console.error('❌ Error deleting product:', error)
     return NextResponse.json(
-      { success: false, error: 'Failed to delete product' },
+      { success: false, error: `Failed to delete product: ${error}` },
       { status: 500 }
     )
   }

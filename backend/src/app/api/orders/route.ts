@@ -5,13 +5,28 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const userId = searchParams.get('userId')
+    
+    console.log('GET /api/orders - userId:', userId)
 
     const orders = await prisma.order.findMany({
       where: userId ? { userId } : {},
-      include: { user: true, prescription: true },
+      include: { 
+        user: {
+          include: {
+            addresses: true
+          }
+        },
+        prescription: true 
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
     })
+    
+    console.log('Orders found:', orders.length)
     return NextResponse.json(orders)
   } catch (error) {
+    console.error('GET /api/orders error:', error)
     return NextResponse.json({ error: 'Failed to fetch orders' }, { status: 500 })
   }
 }

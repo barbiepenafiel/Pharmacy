@@ -12,10 +12,10 @@ class AuthService {
 
   // Backend URL - use local IP for emulator/real device, localhost for web
   static String get baseUrl {
-    // For web (Chrome, Firefox, etc), use localhost
-    // For Android emulator or real device, use local IP
-    // For iOS simulator, use localhost
-    return 'http://192.168.1.7:3000';
+    // For Android emulator: 10.0.2.2 is special alias for host machine localhost
+    // For physical device: use your local IP (run ipconfig to find it)
+    // For iOS simulator: use localhost or 127.0.0.1
+    return 'http://10.0.2.2:3000';
   }
 
   // In-memory token storage

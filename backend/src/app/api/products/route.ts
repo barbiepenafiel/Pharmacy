@@ -32,9 +32,43 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Trim the name to handle whitespace
+    const trimmedName = name.trim()
+
+    // Check for duplicate product name (case-insensitive)
+    const existingProduct = await prisma.product.findFirst({
+      where: {
+        name: {
+          equals: trimmedName,
+          mode: 'insensitive',
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        category: true,
+      },
+    })
+
+    if (existingProduct) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Product name '${existingProduct.name}' already exists`,
+          code: 'DUPLICATE_NAME',
+          existingProduct: {
+            id: existingProduct.id,
+            name: existingProduct.name,
+            category: existingProduct.category,
+          },
+        },
+        { status: 409 }
+      )
+    }
+
     const product = await prisma.product.create({
       data: {
-        name,
+        name: trimmedName,
         description,
         dosage,
         category,
@@ -49,8 +83,21 @@ export async function POST(request: NextRequest) {
       success: true,
       data: product,
     })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating product:', error)
+    
+    // Handle Prisma unique constraint violation
+    if (error.code === 'P2002') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Product name already exists',
+          code: 'DUPLICATE_NAME',
+        },
+        { status: 409 }
+      )
+    }
+
     return NextResponse.json(
       { success: false, error: 'Failed to create product' },
       { status: 500 }

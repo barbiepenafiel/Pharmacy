@@ -812,7 +812,7 @@ class HomeScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            height: 130,
+            height: 95,
             decoration: BoxDecoration(
               color: Colors.grey.shade100,
               borderRadius: const BorderRadius.only(
@@ -821,11 +821,11 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
             child: Center(
-              child: Icon(icon, color: Colors.teal.shade400, size: 60),
+              child: Icon(icon, color: Colors.teal.shade400, size: 48),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -839,7 +839,7 @@ class HomeScreen extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Text(
                   price,
                   style: TextStyle(

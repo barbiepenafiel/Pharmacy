@@ -87,7 +87,7 @@ model Inventory {
 
 model Product {
   id          String   @id @default(cuid())
-  name        String
+  name        String   @unique
   description String?
   dosage      String?
   category    String

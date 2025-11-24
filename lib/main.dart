@@ -30,13 +30,67 @@ class PharmacyApp extends StatelessWidget {
         scaffoldBackgroundColor: Colors.grey.shade50,
       ),
       home: const WelcomeScreen(),
-      routes: {
-        '/login': (context) => const LoginScreen(),
-        '/register': (context) => const RegisterScreen(),
-        '/home': (context) => const HomePage(),
-        '/admin': (context) => const AdminDashboardScreen(),
-      },
+      onGenerateRoute: _onGenerateRoute,
     );
+  }
+
+  /// Route guard - checks authentication before navigating to protected routes
+  static Route<dynamic>? _onGenerateRoute(RouteSettings settings) {
+    final authService = AuthService();
+
+    switch (settings.name) {
+      // Public routes (no authentication required)
+      case '/login':
+        return MaterialPageRoute(builder: (_) => const LoginScreen());
+
+      case '/register':
+        return MaterialPageRoute(builder: (_) => const RegisterScreen());
+
+      // Protected routes (authentication required)
+      case '/home':
+        if (!authService.isLoggedIn()) {
+          return MaterialPageRoute(
+            builder: (_) => const LoginScreen(),
+            settings: const RouteSettings(name: '/login'),
+          );
+        }
+        return MaterialPageRoute(builder: (_) => const HomePage());
+
+      // Admin-only route
+      case '/admin':
+        if (!authService.isLoggedIn()) {
+          // Not logged in - redirect to login
+          return MaterialPageRoute(
+            builder: (_) => const LoginScreen(),
+            settings: const RouteSettings(name: '/login'),
+          );
+        }
+        if (!authService.isAdmin()) {
+          // Logged in but not admin - redirect to home with error message
+          return MaterialPageRoute(
+            builder: (context) => Builder(
+              builder: (context) {
+                // Show error message after build
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Admin access required'),
+                      backgroundColor: Colors.red,
+                      duration: Duration(seconds: 3),
+                    ),
+                  );
+                });
+                return const HomePage();
+              },
+            ),
+          );
+        }
+        return MaterialPageRoute(builder: (_) => const AdminDashboardScreen());
+
+      // Default: return null to use the home property
+      default:
+        return null;
+    }
   }
 }
 

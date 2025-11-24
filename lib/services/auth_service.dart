@@ -21,6 +21,7 @@ class AuthService {
   // In-memory token storage
   String? _authToken;
   Map<String, dynamic>? _currentUser;
+  DateTime? _tokenExpiration;
 
   /// Login user via backend API
   Future<({bool success, String message, String? fullName})> login({
@@ -71,6 +72,9 @@ class AuthService {
       if (response.statusCode == 200 && responseData['success'] == true) {
         // Store token
         _authToken = responseData['token'];
+
+        // Store token expiration (24 hours from now)
+        _tokenExpiration = DateTime.now().add(const Duration(hours: 24));
 
         // Store user info
         _currentUser = {
@@ -196,15 +200,38 @@ class AuthService {
     return _currentUser?['isAdmin'] ?? false;
   }
 
+  /// Get authentication token
+  String? get token => _authToken;
+
   /// Check if user is logged in
   bool isLoggedIn() {
-    return _authToken != null && _currentUser != null;
+    // Check if token exists and hasn't expired
+    if (_authToken == null || _currentUser == null) {
+      return false;
+    }
+
+    // Auto-logout if token expired
+    if (isTokenExpired()) {
+      logout();
+      return false;
+    }
+
+    return true;
+  }
+
+  /// Check if token has expired
+  bool isTokenExpired() {
+    if (_tokenExpiration == null) {
+      return true; // No expiration set, consider expired
+    }
+    return DateTime.now().isAfter(_tokenExpiration!);
   }
 
   /// Logout user
   void logout() {
     _authToken = null;
     _currentUser = null;
+    _tokenExpiration = null;
   }
 
   /// Validate email format

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { auth, admin } from '@/middleware'
 
 export async function GET(
   request: NextRequest,
@@ -31,12 +32,12 @@ export async function GET(
   }
 }
 
-export async function PUT(
+async function putHandler(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params
+    const { id } = await context.params
     const body = await request.json()
     const { name, description, dosage, category, price, imageUrl, quantity, supplier } = body
 
@@ -119,12 +120,21 @@ export async function PUT(
   }
 }
 
-export async function DELETE(
+export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> }
+) {
+  return auth(admin(async (req) => {
+    return putHandler(req, context)
+  }))(request)
+}
+
+async function deleteHandler(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params
+    const { id} = await context.params
     console.log('🗑️ DELETE request for product ID:', id)
     
     // First check if product exists
@@ -159,4 +169,13 @@ export async function DELETE(
       { status: 500 }
     )
   }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  return auth(admin(async (req) => {
+    return deleteHandler(req, context)
+  }))(request)
 }

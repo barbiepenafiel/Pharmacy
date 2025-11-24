@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { auth, admin } from '@/middleware'
 
 export async function GET(request: NextRequest) {
   try {
@@ -20,7 +21,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+export const POST = auth(admin(async (request: NextRequest) => {
   try {
     const body = await request.json()
     const { name, description, dosage, category, price, imageUrl, quantity, supplier } = body
@@ -103,4 +104,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     )
   }
-}
+}))

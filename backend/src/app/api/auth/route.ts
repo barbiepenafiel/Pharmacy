@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import bcrypt from 'bcrypt'
+import jwt from 'jsonwebtoken'
+
+const JWT_SECRET = process.env.JWT_SECRET || ''
+const JWT_EXPIRATION = process.env.JWT_EXPIRATION || '24h'
+
+if (!JWT_SECRET) {
+  console.error('JWT_SECRET environment variable is not set!')
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -41,18 +50,38 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      // For now, simple password check (in production, use bcrypt)
-      if (user.password !== password) {
+      // Verify password with bcrypt
+      const isValidPassword = await bcrypt.compare(password, user.password)
+      
+      if (!isValidPassword) {
         return NextResponse.json({
           success: false,
           message: 'Invalid email or password',
         })
       }
 
+      // Generate JWT token
+      if (!JWT_SECRET) {
+        return NextResponse.json(
+          { success: false, message: 'Server configuration error' },
+          { status: 500 }
+        )
+      }
+
+      const token = jwt.sign(
+        {
+          userId: user.id,
+          email: user.email,
+          role: user.role,
+        } as object,
+        JWT_SECRET,
+        { expiresIn: JWT_EXPIRATION } as jwt.SignOptions
+      )
+
       return NextResponse.json({
         success: true,
         message: 'Login successful',
-        token: 'dummy-token-' + user.id,
+        token,
         user: {
           id: user.id,
           email: user.email,
@@ -82,12 +111,15 @@ export async function POST(request: NextRequest) {
         })
       }
 
+      // Hash password with bcrypt (10 salt rounds)
+      const hashedPassword = await bcrypt.hash(password, 10)
+
       // Create new user
       const user = await prisma.user.create({
         data: {
           name: fullName,
           email,
-          password,
+          password: hashedPassword,
           role: 'customer',
         },
       })

@@ -1,4 +1,14 @@
+// ignore_for_file: avoid_print
+
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
+import 'dart:io';
+import 'dart:async';
+import 'services/logger_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/my_orders_screen.dart';
@@ -9,10 +19,29 @@ import 'screens/settings_screen.dart';
 import 'screens/help_support_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/products_screen.dart';
+import 'screens/scanner_screen.dart';
+import 'screens/order_tracker_screen.dart';
 import 'services/auth_service.dart';
+import 'services/firebase_service.dart';
 import 'services/cart_service.dart';
+import 'services/notification_service.dart';
+import 'config/stripe_config.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Firebase
+  await Firebase.initializeApp();
+
+  // Enable offline persistence for Firebase Realtime Database
+  FirebaseDatabase.instance.setPersistenceEnabled(true);
+  FirebaseDatabase.instance.setPersistenceCacheSizeBytes(
+    10000000,
+  ); // 10MB cache
+
+  // Initialize Stripe
+  Stripe.publishableKey = StripeConfig.publishableKey;
+
   runApp(const PharmacyApp());
 }
 
@@ -46,14 +75,9 @@ class PharmacyApp extends StatelessWidget {
       case '/register':
         return MaterialPageRoute(builder: (_) => const RegisterScreen());
 
-      // Protected routes (authentication required)
+      // Protected routes (authentication required) - but guests can still browse
       case '/home':
-        if (!authService.isLoggedIn()) {
-          return MaterialPageRoute(
-            builder: (_) => const LoginScreen(),
-            settings: const RouteSettings(name: '/login'),
-          );
-        }
+        // Allow both logged-in users and guests to access home
         return MaterialPageRoute(builder: (_) => const HomePage());
 
       // Admin-only route
@@ -65,26 +89,7 @@ class PharmacyApp extends StatelessWidget {
             settings: const RouteSettings(name: '/login'),
           );
         }
-        if (!authService.isAdmin()) {
-          // Logged in but not admin - redirect to home with error message
-          return MaterialPageRoute(
-            builder: (context) => Builder(
-              builder: (context) {
-                // Show error message after build
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Admin access required'),
-                      backgroundColor: Colors.red,
-                      duration: Duration(seconds: 3),
-                    ),
-                  );
-                });
-                return const HomePage();
-              },
-            ),
-          );
-        }
+        // Let the admin dashboard screen itself check and handle admin role
         return MaterialPageRoute(builder: (_) => const AdminDashboardScreen());
 
       // Default: return null to use the home property
@@ -393,16 +398,46 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   final VoidCallback onNavigateToStore;
 
   const HomeScreen({super.key, required this.onNavigateToStore});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  List<dynamic> newProducts = [];
+  bool isLoadingProducts = true;
+  final FirebaseService _firebaseService = FirebaseService();
+  final CartService _cartService = CartService();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNewProducts();
+  }
+
+  Future<void> _loadNewProducts() async {
+    try {
+      final allProducts = await _firebaseService.getAllProducts();
+      setState(() {
+        // Get the latest products (first 6)
+        newProducts = allProducts.take(6).toList();
+        isLoadingProducts = false;
+      });
+    } catch (e) {
+      setState(() => isLoadingProducts = false);
+      // Silently fail - will show placeholder products
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final authService = AuthService();
-    final currentUser = authService.getCurrentUser();
-    final userName = currentUser?['fullName'] ?? 'Guest';
+    final firebaseUser = authService.currentFirebaseUser;
+    final userName = firebaseUser?.displayName ?? 'Guest';
 
     return SingleChildScrollView(
       child: Column(
@@ -456,29 +491,63 @@ class HomeScreen extends StatelessWidget {
                   ),
                   Row(
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(
-                          Icons.notifications_outlined,
-                          size: 24,
-                          color: Colors.black54,
+                      GestureDetector(
+                        onTap: () {
+                          _showNotificationsPanel(context);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Stack(
+                            children: [
+                              const Icon(
+                                Icons.notifications_outlined,
+                                size: 24,
+                                color: Colors.black54,
+                              ),
+                              Positioned(
+                                top: 0,
+                                right: 0,
+                                child: Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: Colors.red,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(
-                          Icons.qr_code_scanner,
-                          size: 24,
-                          color: Colors.black54,
+                      GestureDetector(
+                        onTap: () async {
+                          final result = await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const ScannerScreen(),
+                            ),
+                          );
+                          if (result != null) {
+                            _handleScannedProduct(result);
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(
+                            Icons.qr_code_scanner,
+                            size: 24,
+                            color: Colors.black54,
+                          ),
                         ),
                       ),
                     ],
@@ -662,7 +731,7 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
                 TextButton(
-                  onPressed: onNavigateToStore,
+                  onPressed: widget.onNavigateToStore,
                   style: TextButton.styleFrom(padding: EdgeInsets.zero),
                   child: Row(
                     children: [
@@ -696,24 +765,28 @@ class HomeScreen extends StatelessWidget {
                   'Medicine',
                   Icons.medication,
                   const Color(0xFFFFB6C1),
+                  'Medicine',
                 ),
                 const SizedBox(width: 12),
                 _buildCategoryItem(
                   'Diabetes',
                   Icons.devices,
                   const Color(0xFF87CEEB),
+                  'Diabetes',
                 ),
                 const SizedBox(width: 12),
                 _buildCategoryItem(
                   'Skin Care',
                   Icons.spa_outlined,
                   const Color(0xFFFFC0CB),
+                  'Skin Care',
                 ),
                 const SizedBox(width: 12),
                 _buildCategoryItem(
                   'Bandage',
                   Icons.healing,
                   const Color(0xFFFFDAB9),
+                  'Bandage',
                 ),
               ],
             ),
@@ -737,7 +810,7 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
                 TextButton(
-                  onPressed: onNavigateToStore,
+                  onPressed: widget.onNavigateToStore,
                   style: TextButton.styleFrom(padding: EdgeInsets.zero),
                   child: Row(
                     children: [
@@ -762,25 +835,26 @@ class HomeScreen extends StatelessWidget {
           ),
           SizedBox(
             height: 150,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              children: [
-                _buildProductCard('Paracetamol', '\$5.99', Icons.medication),
-                const SizedBox(width: 12),
-                _buildProductCard(
-                  'Multivitamin',
-                  '\$12.99',
-                  Icons.health_and_safety,
-                ),
-                const SizedBox(width: 12),
-                _buildProductCard(
-                  'Protein Powder',
-                  '\$24.99',
-                  Icons.fitness_center,
-                ),
-              ],
-            ),
+            child: isLoadingProducts
+                ? const Center(child: CircularProgressIndicator())
+                : newProducts.isEmpty
+                ? Center(
+                    child: Text(
+                      'No new products available',
+                      style: TextStyle(color: Colors.grey.shade600),
+                    ),
+                  )
+                : ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: newProducts.length,
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(width: 12),
+                    itemBuilder: (context, index) {
+                      final product = newProducts[index];
+                      return _buildProductCard(product);
+                    },
+                  ),
           ),
 
           const SizedBox(height: 24),
@@ -789,7 +863,12 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildCategoryItem(String label, IconData icon, Color color) {
+  Widget _buildCategoryItem(
+    String label,
+    IconData icon,
+    Color color,
+    String categoryFilter,
+  ) {
     // Map specific category labels to asset images. If no asset is found, show the icon.
     final labelKey = label.toLowerCase();
     String? assetPath;
@@ -804,7 +883,16 @@ class HomeScreen extends StatelessWidget {
     }
 
     return GestureDetector(
-      onTap: onNavigateToStore,
+      onTap: () {
+        // Navigate to products screen with category filter
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                Scaffold(body: ProductsScreen(categoryFilter: categoryFilter)),
+          ),
+        );
+      },
       child: SizedBox(
         width: 75,
         child: Column(
@@ -848,7 +936,11 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildProductCard(String name, String price, IconData icon) {
+  Widget _buildProductCard(dynamic product) {
+    final name = product['name'] ?? 'Unnamed Product';
+    final price = product['price'] ?? 0;
+    final imageUrl = product['imageUrl'];
+
     return Container(
       width: 150,
       decoration: BoxDecoration(
@@ -874,9 +966,31 @@ class HomeScreen extends StatelessWidget {
                 topRight: Radius.circular(16),
               ),
             ),
-            child: Center(
-              child: Icon(icon, color: Colors.teal.shade400, size: 48),
-            ),
+            child: imageUrl != null && imageUrl.isNotEmpty
+                ? ClipRRect(
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      topRight: Radius.circular(16),
+                    ),
+                    child: Image.network(
+                      imageUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Center(
+                        child: Icon(
+                          Icons.broken_image,
+                          color: Colors.grey.shade400,
+                          size: 40,
+                        ),
+                      ),
+                    ),
+                  )
+                : Center(
+                    child: Icon(
+                      Icons.medication,
+                      color: Colors.teal.shade400,
+                      size: 48,
+                    ),
+                  ),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -895,7 +1009,7 @@ class HomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  price,
+                  '₱${price.toStringAsFixed(2)}',
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
@@ -906,6 +1020,304 @@ class HomeScreen extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showNotificationsPanel(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Container(
+        color: Colors.white,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Notifications',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(color: Colors.grey.shade300),
+              _buildNotificationItem(
+                'New Product Available',
+                'Vitamin D3 just arrived at ₱199.99',
+                Icons.shopping_bag,
+                Colors.teal,
+              ),
+              _buildNotificationItem(
+                'Order Shipped',
+                'Your order #12345 has been shipped!',
+                Icons.local_shipping,
+                Colors.blue,
+              ),
+              _buildNotificationItem(
+                'Special Offer',
+                'Get 20% off on Pain Relief Medications',
+                Icons.local_offer,
+                Colors.orange,
+              ),
+              _buildNotificationItem(
+                'Prescription Ready',
+                'Your prescription for Amoxicillin is ready for pickup',
+                Icons.medical_services,
+                Colors.red,
+              ),
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    NotificationService().showNewProductNotification(
+                      'Premium Multivitamin',
+                      '₱299.99',
+                    );
+                  },
+                  icon: Icon(Icons.notifications, color: Colors.white),
+                  label: const Text('Send Test Notification'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal.shade700,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(double.infinity, 48),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNotificationItem(
+    String title,
+    String message,
+    IconData icon,
+    Color color,
+  ) {
+    return ListTile(
+      leading: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: color.withAlpha(77),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(icon, color: color, size: 24),
+      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+      subtitle: Text(
+        message,
+        style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+      ),
+      trailing: Text(
+        '2m ago',
+        style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
+      ),
+      onTap: () {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Notification: $title')));
+        Navigator.pop(context);
+      },
+    );
+  }
+
+  void _handleScannedProduct(dynamic result) {
+    // If result is a string (scanned text), just show it
+    if (result is String) {
+      showDialog(
+        context: context,
+        builder: (context) => Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: SingleChildScrollView(
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.qr_code, color: Colors.teal, size: 56),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Scan Result',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 150),
+                    child: SingleChildScrollView(
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.teal.shade50,
+                          border: Border.all(
+                            color: Colors.teal.shade700,
+                            width: 2,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            const Text(
+                              'Scanned Text:',
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 11,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              result,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.teal.shade700,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text(
+                            'Close',
+                            style: TextStyle(fontSize: 13),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Scanned: $result')),
+                            );
+                          },
+                          child: const Text(
+                            'OK',
+                            style: TextStyle(fontSize: 13),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    // If result is a product object
+    final product = result as Map<String, dynamic>;
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.check_circle, color: Colors.green, size: 64),
+              const SizedBox(height: 16),
+              const Text(
+                'Product Found!',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                product['name'] ?? 'Unknown Product',
+                style: const TextStyle(fontSize: 16),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '₱${(product['price'] ?? 0).toStringAsFixed(2)}',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.teal.shade700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Category: ${product['category'] ?? 'N/A'}',
+                style: TextStyle(color: Colors.grey.shade600),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Close'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        // Add to cart
+                        final CartItem cartItem = CartItem(
+                          id: product['id'] ?? '',
+                          name:
+                              product['name'] ??
+                              product['productName'] ??
+                              'Product',
+                          imageUrl: product['imageUrl'] ?? product['image'],
+                          price: (product['price'] ?? 0).toDouble(),
+                          quantity: 1,
+                        );
+                        _cartService.addItem(cartItem);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('${cartItem.name} added to cart'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.teal.shade700,
+                      ),
+                      child: const Text('Add to Cart'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -920,11 +1332,205 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   late AuthService _authService;
+  final FirebaseService _firebaseService = FirebaseService();
+  Map<String, dynamic>? _userProfile;
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
     _authService = AuthService();
+    _loadUserProfile();
+  }
+
+  Future<void> _loadUserProfile() async {
+    final user = _authService.currentFirebaseUser;
+    if (user != null) {
+      try {
+        final profile = await _firebaseService.getUserProfile(user.uid);
+        setState(() {
+          _userProfile = profile;
+        });
+      } catch (e) {
+        logger.error('Error loading profile: $e');
+      }
+    }
+  }
+
+  void _showEditProfileDialog() {
+    final user = _authService.currentFirebaseUser;
+    if (user == null) return;
+
+    final nameController = TextEditingController(
+      text: _userProfile?['name'] ?? user.displayName ?? '',
+    );
+    final phoneController = TextEditingController(
+      text: _userProfile?['phone'] ?? '',
+    );
+    final addressController = TextEditingController(
+      text: _userProfile?['address'] ?? '',
+    );
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Profile'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Full Name',
+                  prefixIcon: Icon(Icons.person),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: phoneController,
+                decoration: const InputDecoration(
+                  labelText: 'Phone Number',
+                  prefixIcon: Icon(Icons.phone),
+                ),
+                keyboardType: TextInputType.phone,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: addressController,
+                decoration: const InputDecoration(
+                  labelText: 'Address',
+                  prefixIcon: Icon(Icons.location_on),
+                ),
+                maxLines: 2,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              await _updateProfile(
+                nameController.text,
+                phoneController.text,
+                addressController.text,
+              );
+              // ignore: use_build_context_synchronously
+              if (mounted) Navigator.pop(context);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal.shade700,
+            ),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _updateProfile(String name, String phone, String address) async {
+    final user = _authService.currentFirebaseUser;
+    if (user == null) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      // Update display name in Firebase Auth
+      await user.updateDisplayName(name);
+      await user.reload();
+
+      // Update profile in database
+      final profileData = {
+        'name': name,
+        'email': user.email,
+        'phone': phone,
+        'address': address,
+        'photoUrl': _userProfile?['photoUrl'] ?? '',
+      };
+
+      await _firebaseService.updateUserProfile(user.uid, profileData);
+      await _loadUserProfile();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Profile updated successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error updating profile: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _uploadProfilePhoto() async {
+    final user = _authService.currentFirebaseUser;
+    if (user == null) return;
+
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+
+      if (image == null) return;
+
+      setState(() => _isLoading = true);
+
+      // Upload to Firebase Storage
+      final storage = FirebaseStorage.instanceFor(
+        bucket: 'gs://pharmacy-app-67eab.firebasestorage.app',
+      );
+      final fileName = 'profile_photos/${user.uid}.jpg';
+      final storageRef = storage.ref().child(fileName);
+      final uploadTask = storageRef.putFile(File(image.path));
+      final snapshot = await uploadTask;
+      final downloadUrl = await snapshot.ref.getDownloadURL();
+
+      // Update user profile with photo URL
+      await _firebaseService.updateUserProfile(user.uid, {
+        'photoUrl': downloadUrl,
+      });
+
+      await _loadUserProfile();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Profile photo updated successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error uploading photo: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() => _isLoading = false);
+    }
   }
 
   void _handleLogout() {
@@ -953,101 +1559,182 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final currentUser = _authService.getCurrentUser();
-    final isLoggedIn = currentUser != null;
+    final firebaseUser = _authService.currentFirebaseUser;
+    final isLoggedIn = firebaseUser != null;
+    final photoUrl = _userProfile?['photoUrl'] as String?;
 
     return SafeArea(
-      child: SingleChildScrollView(
-        child: Column(
-          children: [
-            const SizedBox(height: 24),
+      child: Stack(
+        children: [
+          SingleChildScrollView(
+            child: Column(
+              children: [
+                const SizedBox(height: 24),
+                Stack(
+                  children: [
+                    GestureDetector(
+                      onTap: isLoggedIn ? _uploadProfilePhoto : null,
+                      child: Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.teal.shade100,
+                          image: photoUrl != null && photoUrl.isNotEmpty
+                              ? DecorationImage(
+                                  image: NetworkImage(photoUrl),
+                                  fit: BoxFit.cover,
+                                )
+                              : null,
+                        ),
+                        child: photoUrl == null || photoUrl.isEmpty
+                            ? Icon(
+                                Icons.person,
+                                color: Colors.teal.shade700,
+                                size: 48,
+                              )
+                            : null,
+                      ),
+                    ),
+                    if (isLoggedIn)
+                      Positioned(
+                        bottom: 0,
+                        right: 0,
+                        child: GestureDetector(
+                          onTap: _uploadProfilePhoto,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.teal.shade700,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 2),
+                            ),
+                            child: const Icon(
+                              Icons.camera_alt,
+                              size: 16,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  isLoggedIn
+                      ? (_userProfile?['name'] as String?) ??
+                            firebaseUser.displayName ??
+                            'User'
+                      : 'Guest User',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  isLoggedIn
+                      ? firebaseUser.email ?? 'guest@example.com'
+                      : 'Not logged in',
+                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                ),
+                if (isLoggedIn) ...[
+                  const SizedBox(height: 8),
+                  ElevatedButton.icon(
+                    onPressed: _showEditProfileDialog,
+                    icon: const Icon(Icons.edit, size: 16),
+                    label: const Text('Edit Profile'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.teal.shade700,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 10,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 32),
+                _buildProfileMenuItem('My Orders', Icons.shopping_bag, () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const MyOrdersScreen()),
+                  );
+                }),
+                _buildProfileMenuItem('Prescriptions', Icons.description, () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const PrescriptionsScreen(),
+                    ),
+                  );
+                }),
+                _buildProfileMenuItem('Saved Addresses', Icons.location_on, () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const SavedAddressesScreen(),
+                    ),
+                  );
+                }),
+                _buildProfileMenuItem('Payment Methods', Icons.payment, () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const PaymentMethodsScreen(),
+                    ),
+                  );
+                }),
+                _buildProfileMenuItem('Settings', Icons.settings, () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                  );
+                }),
+                _buildProfileMenuItem('Help & Support', Icons.help, () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const HelpSupportScreen(),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 24),
+                if (isLoggedIn)
+                  ElevatedButton(
+                    onPressed: _handleLogout,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red.shade400,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 40,
+                        vertical: 12,
+                      ),
+                    ),
+                    child: const Text(
+                      'Logout',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  )
+                else
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(context).pushNamed('/login');
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.teal.shade700,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 40,
+                        vertical: 12,
+                      ),
+                    ),
+                    child: const Text(
+                      'Login',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                const SizedBox(height: 24),
+              ],
+            ),
+          ),
+          if (_isLoading)
             Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.teal.shade100,
-              ),
-              child: Icon(Icons.person, color: Colors.teal.shade700, size: 48),
+              color: Colors.black.withValues(alpha: 0.5),
+              child: const Center(child: CircularProgressIndicator()),
             ),
-            const SizedBox(height: 16),
-            Text(
-              isLoggedIn ? currentUser['fullName'] ?? 'User' : 'Guest User',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            Text(
-              isLoggedIn
-                  ? currentUser['email'] ?? 'guest@example.com'
-                  : 'Not logged in',
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-            ),
-            const SizedBox(height: 32),
-            _buildProfileMenuItem('My Orders', Icons.shopping_bag, () {
-              Navigator.of(
-                context,
-              ).push(MaterialPageRoute(builder: (_) => const MyOrdersScreen()));
-            }),
-            _buildProfileMenuItem('Prescriptions', Icons.description, () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const PrescriptionsScreen()),
-              );
-            }),
-            _buildProfileMenuItem('Saved Addresses', Icons.location_on, () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const SavedAddressesScreen()),
-              );
-            }),
-            _buildProfileMenuItem('Payment Methods', Icons.payment, () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const PaymentMethodsScreen()),
-              );
-            }),
-            _buildProfileMenuItem('Settings', Icons.settings, () {
-              Navigator.of(
-                context,
-              ).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
-            }),
-            _buildProfileMenuItem('Help & Support', Icons.help, () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const HelpSupportScreen()),
-              );
-            }),
-            const SizedBox(height: 24),
-            if (isLoggedIn)
-              ElevatedButton(
-                onPressed: _handleLogout,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red.shade400,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 40,
-                    vertical: 12,
-                  ),
-                ),
-                child: const Text(
-                  'Logout',
-                  style: TextStyle(color: Colors.white),
-                ),
-              )
-            else
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).pushNamed('/login');
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.teal.shade700,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 40,
-                    vertical: 12,
-                  ),
-                ),
-                child: const Text(
-                  'Login',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
-            const SizedBox(height: 24),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -1076,40 +1763,418 @@ class StoreScreen extends StatelessWidget {
   }
 }
 
-// Tracker Screen (Placeholder)
-class TrackerScreen extends StatelessWidget {
+// Tracker Screen - Shows all user orders with tracking
+class TrackerScreen extends StatefulWidget {
   const TrackerScreen({super.key});
+
+  @override
+  State<TrackerScreen> createState() => _TrackerScreenState();
+}
+
+class _TrackerScreenState extends State<TrackerScreen> {
+  final FirebaseService _firebaseService = FirebaseService();
+  final AuthService _authService = AuthService();
+
+  List<Map<String, dynamic>> orders = [];
+  bool loading = true;
+  String? errorMessage;
+  StreamSubscription? _ordersSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOrders();
+  }
+
+  @override
+  void dispose() {
+    _ordersSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _loadOrders() async {
+    setState(() {
+      loading = true;
+      errorMessage = null;
+    });
+
+    try {
+      final user = _authService.currentFirebaseUser;
+      if (user == null) {
+        setState(() {
+          loading = false;
+          errorMessage = 'Please login to view your orders';
+        });
+        return;
+      }
+
+      // Use real-time listener for automatic updates
+      _ordersSubscription = _firebaseService.watchUserOrders().listen(
+        (ordersList) {
+          setState(() {
+            // Sort by createdAt descending (newest first)
+            orders = ordersList
+              ..sort((a, b) {
+                final aTime = a['createdAt'] ?? 0;
+                final bTime = b['createdAt'] ?? 0;
+                return bTime.compareTo(aTime);
+              });
+            loading = false;
+            errorMessage = null;
+          });
+        },
+        onError: (error) {
+          setState(() {
+            loading = false;
+            errorMessage = 'Error loading orders: ${error.toString()}';
+          });
+        },
+      );
+    } catch (e) {
+      setState(() {
+        loading = false;
+        errorMessage = 'Error loading orders: ${e.toString()}';
+      });
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending':
+        return Colors.orange;
+      case 'processing':
+        return Colors.blue;
+      case 'shipped':
+        return Colors.purple;
+      case 'delivered':
+        return Colors.green;
+      case 'cancelled':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData _getStatusIcon(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending':
+        return Icons.hourglass_empty;
+      case 'processing':
+        return Icons.sync;
+      case 'shipped':
+        return Icons.local_shipping;
+      case 'delivered':
+        return Icons.check_circle;
+      case 'cancelled':
+        return Icons.cancel;
+      default:
+        return Icons.info;
+    }
+  }
+
+  String _formatDate(dynamic timestamp) {
+    if (timestamp == null) return 'N/A';
+    try {
+      final date = DateTime.fromMillisecondsSinceEpoch(timestamp as int);
+      final months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
+      return '${months[date.month - 1]} ${date.day}, ${date.year}';
+    } catch (e) {
+      return 'N/A';
+    }
+  }
+
+  String _getOrderItemsSummary(dynamic items) {
+    if (items == null || items is! List || items.isEmpty) return 'No items';
+    final itemsList = items;
+    if (itemsList.length == 1) {
+      return itemsList[0]['name'] ?? 'Item';
+    } else if (itemsList.length == 2) {
+      return '${itemsList[0]['name']}, ${itemsList[1]['name']}';
+    } else {
+      return '${itemsList[0]['name']} and ${itemsList.length - 1} more';
+    }
+  }
+
+  List<Map<String, dynamic>> _safeConvertItems(dynamic items) {
+    if (items == null) return [];
+    if (items is List) {
+      try {
+        return items.map((item) {
+          if (item is Map) {
+            return Map<String, dynamic>.from(item);
+          }
+          return <String, dynamic>{};
+        }).toList();
+      } catch (e) {
+        logger.error('Error converting items: $e');
+        return [];
+      }
+    }
+    return [];
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Order Tracker')),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.local_shipping_outlined,
-              size: 80,
-              color: Colors.grey.shade300,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No Orders Yet',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey.shade700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Your order tracking will appear here',
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
-            ),
-          ],
-        ),
+      appBar: AppBar(
+        title: const Text('Order Tracker'),
+        backgroundColor: Colors.teal.shade700,
+        elevation: 0,
       ),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : errorMessage != null
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    size: 64,
+                    color: Colors.red.shade300,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    errorMessage!,
+                    style: TextStyle(color: Colors.grey.shade600),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: _loadOrders,
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            )
+          : orders.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.local_shipping_outlined,
+                    size: 80,
+                    color: Colors.grey.shade300,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No Orders Yet',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Your order tracking will appear here',
+                    style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+                  ),
+                ],
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: orders.length,
+              itemBuilder: (context, index) {
+                final order = orders[index];
+                final status = order['status'] ?? 'unknown';
+                final statusColor = _getStatusColor(status);
+                final statusIcon = _getStatusIcon(status);
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.05),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: InkWell(
+                    onTap: () {
+                      // Navigate to Order Tracker screen
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => OrderTrackerScreen(
+                            orderId: order['id'] ?? '',
+                            totalAmount: (order['total'] ?? 0.0).toDouble(),
+                            deliveryAddress: order['deliveryAddress'] ?? 'N/A',
+                            paymentMethod: order['paymentMethod'] ?? 'N/A',
+                            items: _safeConvertItems(order['items']),
+                          ),
+                        ),
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Order ID and Status Badge
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Order #${order['id']?.toString().substring(0, 8) ?? 'N/A'}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: statusColor.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: statusColor.withValues(alpha: 0.3),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      statusIcon,
+                                      size: 14,
+                                      color: statusColor,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      status.toUpperCase(),
+                                      style: TextStyle(
+                                        color: statusColor,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          // Date
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.calendar_today,
+                                size: 14,
+                                color: Colors.grey.shade600,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                _formatDate(order['createdAt']),
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          // Items
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.shopping_bag,
+                                size: 14,
+                                color: Colors.grey.shade600,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  _getOrderItemsSummary(order['items']),
+                                  style: TextStyle(
+                                    color: Colors.grey.shade600,
+                                    fontSize: 13,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          // Total and Track Button
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                '₱${order['total']?.toStringAsFixed(2) ?? '0.00'}',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 18,
+                                  color: Colors.teal.shade700,
+                                ),
+                              ),
+                              ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => OrderTrackerScreen(
+                                        orderId: order['id'] ?? '',
+                                        totalAmount: (order['total'] ?? 0.0)
+                                            .toDouble(),
+                                        deliveryAddress:
+                                            order['deliveryAddress'] ?? 'N/A',
+                                        paymentMethod:
+                                            order['paymentMethod'] ?? 'N/A',
+                                        items: _safeConvertItems(
+                                          order['items'],
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(Icons.location_on, size: 16),
+                                label: const Text('Track'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.teal.shade700,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }

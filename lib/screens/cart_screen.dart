@@ -1,6 +1,10 @@
 // ignore_for_file: deprecated_member_use
 import 'package:flutter/material.dart';
 import '../services/cart_service.dart';
+import '../services/auth_service.dart';
+import '../services/firebase_service.dart';
+import 'order_tracker_screen.dart';
+import 'stripe_payment_screen.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({super.key});
@@ -343,21 +347,49 @@ class CheckoutScreen extends StatefulWidget {
 
 class _CheckoutScreenState extends State<CheckoutScreen> {
   final CartService _cartService = CartService();
-  String _selectedAddress = 'Home';
-  String _selectedPaymentMethod = 'Credit Card';
+  final FirebaseService _firebaseService = FirebaseService();
+  String _selectedAddress = '';
+  String _selectedPaymentMethod = 'stripe';
   bool _agreedToTerms = false;
   bool _isProcessing = false;
+  List<Map<String, dynamic>> _userAddresses = [];
+  bool _loadingAddresses = true;
 
-  final List<Map<String, String>> _addresses = [
-    {'label': 'Home', 'value': '123 Main St, Manila, NCR 1000'},
-    {'label': 'Office', 'value': '456 Business Ave, Makati, NCR 1200'},
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadUserAddresses();
+  }
+
+  Future<void> _loadUserAddresses() async {
+    try {
+      final addresses = await _firebaseService.getUserAddresses();
+      setState(() {
+        _userAddresses = addresses;
+        _loadingAddresses = false;
+        // Set first address as default, or first default address
+        if (addresses.isNotEmpty) {
+          final defaultAddr = addresses.firstWhere(
+            (addr) => addr['isDefault'] == true,
+            orElse: () => addresses.first,
+          );
+          _selectedAddress = defaultAddr['id'] ?? '';
+        }
+      });
+    } catch (e) {
+      setState(() => _loadingAddresses = false);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error loading addresses: $e')));
+      }
+    }
+  }
 
   final List<Map<String, String>> _paymentMethods = [
-    {'label': 'Credit Card', 'icon': 'credit_card'},
-    {'label': 'Debit Card', 'icon': 'payment'},
-    {'label': 'GCash', 'icon': 'phone_android'},
-    {'label': 'Cash on Delivery', 'icon': 'local_shipping'},
+    {'label': 'Stripe (Credit/Debit Card)', 'value': 'stripe'},
+    {'label': 'GCash', 'value': 'gcash'},
+    {'label': 'Cash on Delivery', 'value': 'cod'},
   ];
 
   void _processPayment() async {
@@ -368,59 +400,214 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
+    if (_selectedAddress.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a delivery address')),
+      );
+      return;
+    }
+
+    // Get selected address details
+    final selectedAddressData = _userAddresses.firstWhere(
+      (addr) => addr['id'] == _selectedAddress,
+      orElse: () => {},
+    );
+
+    if (selectedAddressData.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Invalid address selected')));
+      return;
+    }
+
     setState(() => _isProcessing = true);
 
-    // Simulate payment processing
-    await Future.delayed(const Duration(seconds: 2));
+    try {
+      // Get current user
+      final authService = AuthService();
+      final user = authService.currentFirebaseUser;
 
-    setState(() => _isProcessing = false);
+      if (user == null) {
+        throw Exception('Please login to place an order');
+      }
 
-    if (!mounted) return;
+      // Get user profile for denormalized data
+      final userData = await authService.getCurrentUser();
+      final userName = userData?['name'] ?? 'Guest User';
+      final userEmail = user.email ?? '';
 
-    _cartService.clearCart();
+      final subtotal = _cartService.totalPrice;
+      final shipping = 50.0;
+      final total = subtotal + shipping;
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Order Placed Successfully'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Thank you for your purchase!'),
-            const SizedBox(height: 16),
-            Text(
-              'Order #: ORD-${DateTime.now().millisecondsSinceEpoch.toString().substring(0, 10)}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Total: ₱${(_cartService.totalPrice + 50).toStringAsFixed(2)}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Your order will be delivered within 2-3 business days.',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ],
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context); // Close dialog
-              Navigator.pop(context); // Close checkout
-              Navigator.pop(context); // Close cart
+      // Prepare order items
+      final orderItems = _cartService.items
+          .map(
+            (item) => {
+              'productId': item.id,
+              'productName': item.name,
+              'price': item.price,
+              'quantity': item.quantity,
+              'subtotal': item.price * item.quantity,
             },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.teal.shade700,
+          )
+          .toList();
+
+      // Format delivery address
+      final deliveryAddress =
+          '${selectedAddressData['address']}, ${selectedAddressData['city']}';
+
+      // Create order in Firebase
+      final firebaseService = FirebaseService();
+      final orderId = await firebaseService.createOrder({
+        'items': orderItems,
+        'total': total,
+        'subtotal': subtotal,
+        'shippingFee': shipping,
+        'status': _selectedPaymentMethod == 'stripe'
+            ? 'pending_payment'
+            : 'pending',
+        'deliveryAddress': deliveryAddress,
+        'paymentMethod': _selectedPaymentMethod,
+        'paymentStatus': _selectedPaymentMethod == 'stripe'
+            ? 'pending'
+            : 'not_required',
+        // Denormalized user data for efficient queries
+        'userName': userName,
+        'userEmail': userEmail,
+      });
+
+      // Handle different payment methods
+      if (_selectedPaymentMethod == 'stripe') {
+        // Navigate to Stripe payment screen
+        setState(() => _isProcessing = false);
+
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => StripePaymentScreen(
+                amount: total,
+                orderId: orderId,
+                deliveryAddress: deliveryAddress,
+                onPaymentSuccess: () {
+                  // Payment successful - update order status
+                  _firebaseService.updateOrderStatus(orderId, 'paid');
+                  Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => OrderTrackerScreen(
+                        orderId: orderId,
+                        totalAmount: total,
+                        deliveryAddress: deliveryAddress,
+                        paymentMethod: _selectedPaymentMethod,
+                        items: _cartService.items
+                            .map(
+                              (item) => {
+                                'id': item.id,
+                                'name': item.name,
+                                'price': item.price,
+                                'quantity': item.quantity,
+                              },
+                            )
+                            .toList(),
+                      ),
+                    ),
+                  );
+                },
+                onPaymentError: (error) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Payment failed: $error'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                },
+              ),
             ),
-            child: const Text('Back to Home'),
+          );
+        }
+      } else if (_selectedPaymentMethod == 'cod') {
+        // Cash on Delivery - Order is confirmed immediately
+        _cartService.clearCart();
+
+        setState(() => _isProcessing = false);
+
+        // Navigate to Order Tracker
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => OrderTrackerScreen(
+                orderId: orderId,
+                totalAmount: total,
+                deliveryAddress: deliveryAddress,
+                paymentMethod: _selectedPaymentMethod,
+                items: _cartService.items
+                    .map(
+                      (item) => {
+                        'id': item.id,
+                        'name': item.name,
+                        'price': item.price,
+                        'quantity': item.quantity,
+                      },
+                    )
+                    .toList(),
+              ),
+            ),
+          );
+        }
+      } else {
+        // GCash and other methods
+        _cartService.clearCart();
+
+        setState(() => _isProcessing = false);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Order created! Please complete payment via $_selectedPaymentMethod',
+              ),
+            ),
+          );
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => OrderTrackerScreen(
+                orderId: orderId,
+                totalAmount: total,
+                deliveryAddress: deliveryAddress,
+                paymentMethod: _selectedPaymentMethod,
+                items: _cartService.items
+                    .map(
+                      (item) => {
+                        'id': item.id,
+                        'name': item.name,
+                        'price': item.price,
+                        'quantity': item.quantity,
+                      },
+                    )
+                    .toList(),
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      setState(() => _isProcessing = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error creating order: ${e.toString()}'),
+            backgroundColor: Colors.red,
           ),
-        ],
-      ),
-    );
+        );
+      }
+    }
   }
 
   @override
@@ -441,48 +628,123 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             // Delivery Address
             _buildSection(
               title: 'Delivery Address',
-              child: Column(
-                children: _addresses
-                    .map(
-                      (addr) => GestureDetector(
-                        onTap: () {
-                          setState(() => _selectedAddress = addr['label']!);
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          decoration: BoxDecoration(
-                            border: Border(
-                              bottom: BorderSide(color: Colors.grey.shade200),
-                            ),
+              child: _loadingAddresses
+                  ? const Center(child: CircularProgressIndicator())
+                  : _userAddresses.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          const Text(
+                            'No saved addresses. Please add one in your profile.',
                           ),
-                          child: Row(
-                            children: [
-                              Radio<String>(
-                                value: addr['label']!,
-                                groupValue: _selectedAddress,
-                              ),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                          const SizedBox(height: 12),
+                          ElevatedButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('Go Back'),
+                          ),
+                        ],
+                      ),
+                    )
+                  : Column(
+                      children: _userAddresses
+                          .map(
+                            (addr) => GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _selectedAddress = addr['id'] ?? '';
+                                });
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  border: Border(
+                                    bottom: BorderSide(
+                                      color: Colors.grey.shade200,
+                                    ),
+                                  ),
+                                ),
+                                child: Row(
                                   children: [
-                                    Text(addr['label']!),
-                                    Text(
-                                      addr['value']!,
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey,
+                                    Radio<String>(
+                                      value: addr['id'] ?? '',
+                                      groupValue: _selectedAddress,
+                                      onChanged: (value) {
+                                        setState(() {
+                                          _selectedAddress = value ?? '';
+                                        });
+                                      },
+                                    ),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Text(
+                                                addr['type'] ?? '',
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                              if (addr['isDefault'] ?? false)
+                                                Container(
+                                                  margin: const EdgeInsets.only(
+                                                    left: 8,
+                                                  ),
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 6,
+                                                        vertical: 2,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.teal.shade100,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          8,
+                                                        ),
+                                                  ),
+                                                  child: Text(
+                                                    'Default',
+                                                    style: TextStyle(
+                                                      fontSize: 10,
+                                                      color:
+                                                          Colors.teal.shade700,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            '${addr['address'] ?? ''}, ${addr['city'] ?? ''}',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                          Text(
+                                            addr['phone'] ?? '',
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    )
-                    .toList(),
-              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
             ),
             // Payment Method
             _buildSection(
@@ -493,7 +755,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       (method) => GestureDetector(
                         onTap: () {
                           setState(
-                            () => _selectedPaymentMethod = method['label']!,
+                            () => _selectedPaymentMethod = method['value']!,
                           );
                         },
                         child: Container(
@@ -506,8 +768,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           child: Row(
                             children: [
                               Radio<String>(
-                                value: method['label']!,
+                                value: method['value']!,
                                 groupValue: _selectedPaymentMethod,
+                                onChanged: (value) {
+                                  setState(
+                                    () => _selectedPaymentMethod =
+                                        value ?? 'stripe',
+                                  );
+                                },
                               ),
                               Text(method['label']!),
                             ],

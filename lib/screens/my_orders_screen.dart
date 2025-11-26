@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import '../services/firebase_service.dart';
+import '../services/logger_service.dart';
+import 'order_tracker_screen.dart';
 
 class MyOrdersScreen extends StatefulWidget {
   const MyOrdersScreen({super.key});
@@ -8,45 +12,160 @@ class MyOrdersScreen extends StatefulWidget {
 }
 
 class _MyOrdersScreenState extends State<MyOrdersScreen> {
-  // Sample orders data
-  final List<Map<String, dynamic>> orders = [
-    {
-      'id': '#ORD-001',
-      'date': 'Nov 15, 2024',
-      'items': 'Paracetamol x2, Multivitamin x1',
-      'total': '\$15.99',
-      'status': 'Delivered',
-      'statusColor': Colors.green,
-    },
-    {
-      'id': '#ORD-002',
-      'date': 'Nov 10, 2024',
-      'items': 'Protein Powder x1',
-      'total': '\$24.99',
-      'status': 'Delivered',
-      'statusColor': Colors.green,
-    },
-    {
-      'id': '#ORD-003',
-      'date': 'Nov 5, 2024',
-      'items': 'Vitamin C x3, Bandage Pack x1',
-      'total': '\$22.50',
-      'status': 'In Transit',
-      'statusColor': Colors.orange,
-    },
-  ];
+  final FirebaseService _firebaseService = FirebaseService();
+  StreamSubscription<List<Map<String, dynamic>>>? _ordersSubscription;
+  List<Map<String, dynamic>> _orders = [];
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOrders();
+  }
+
+  void _loadOrders() {
+    _ordersSubscription = _firebaseService.watchUserOrders().listen(
+      (orders) {
+        if (mounted) {
+          setState(() {
+            _orders = orders;
+            _isLoading = false;
+            _error = null;
+          });
+        }
+      },
+      onError: (error) {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _error = error.toString();
+          });
+        }
+        logger.error('Error loading orders: $error');
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _ordersSubscription?.cancel();
+    super.dispose();
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending':
+        return Colors.orange;
+      case 'processing':
+        return Colors.blue;
+      case 'shipped':
+        return Colors.blue.shade700;
+      case 'delivered':
+        return Colors.green;
+      case 'cancelled':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _formatDate(dynamic timestamp) {
+    if (timestamp == null) return 'N/A';
+    try {
+      final date = DateTime.fromMillisecondsSinceEpoch(timestamp as int);
+      return '${date.month}/${date.day}/${date.year}';
+    } catch (e) {
+      return 'N/A';
+    }
+  }
+
+  String _getOrderItemsSummary(dynamic itemsData) {
+    if (itemsData == null) return '0 items';
+    try {
+      final items = <String>[];
+
+      if (itemsData is Map) {
+        itemsData.forEach((key, item) {
+          if (item is Map) {
+            final name =
+                item['productName'] ?? item['name'] ?? 'Unknown Product';
+            final qty = item['quantity'] ?? 1;
+            items.add('$name (x$qty)');
+          }
+        });
+      } else if (itemsData is List) {
+        for (var item in itemsData) {
+          if (item is Map) {
+            final name =
+                item['productName'] ?? item['name'] ?? 'Unknown Product';
+            final qty = item['quantity'] ?? 1;
+            items.add('$name (x$qty)');
+          }
+        }
+      }
+
+      if (items.isEmpty) return '0 items';
+      return items.join(', ');
+    } catch (e) {
+      logger.error('Error formatting items: $e');
+      return 'Multiple items';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Orders'),
-        centerTitle: true,
+        backgroundColor: Colors.teal.shade700,
         elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
       ),
-      body: orders.isEmpty
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    size: 80,
+                    color: Colors.red.shade300,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Error loading orders',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _error!,
+                    style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton(
+                    onPressed: () {
+                      setState(() {
+                        _isLoading = true;
+                        _error = null;
+                      });
+                      _loadOrders();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.teal.shade700,
+                    ),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            )
+          : _orders.isEmpty
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -75,9 +194,12 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
             )
           : ListView.builder(
               padding: const EdgeInsets.all(16),
-              itemCount: orders.length,
+              itemCount: _orders.length,
               itemBuilder: (context, index) {
-                final order = orders[index];
+                final order = _orders[index];
+                final status = order['status'] ?? 'unknown';
+                final statusColor = _getStatusColor(status);
+
                 return Container(
                   margin: const EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(
@@ -88,7 +210,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
                   child: ListTile(
                     contentPadding: const EdgeInsets.all(16),
                     title: Text(
-                      order['id'],
+                      'Order #${order['id']?.toString().substring(0, 8) ?? 'N/A'}',
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 16,
@@ -99,7 +221,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
                       children: [
                         const SizedBox(height: 8),
                         Text(
-                          'Date: ${order['date']}',
+                          'Date: ${_formatDate(order['createdAt'])}',
                           style: TextStyle(
                             color: Colors.grey.shade600,
                             fontSize: 12,
@@ -107,7 +229,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Items: ${order['items']}',
+                          'Items: ${_getOrderItemsSummary(order['items'])}',
                           style: TextStyle(
                             color: Colors.grey.shade600,
                             fontSize: 12,
@@ -120,7 +242,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text(
-                              'Total: ${order['total']}',
+                              'Total: ₱${order['total']?.toStringAsFixed(2) ?? '0.00'}',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: Colors.teal.shade700,
@@ -132,13 +254,13 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
                                 vertical: 4,
                               ),
                               decoration: BoxDecoration(
-                                color: order['statusColor'].withAlpha(26),
+                                color: statusColor.withAlpha(26),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Text(
-                                order['status'],
+                                status.toUpperCase(),
                                 style: TextStyle(
-                                  color: order['statusColor'],
+                                  color: statusColor,
                                   fontWeight: FontWeight.w600,
                                   fontSize: 12,
                                 ),
@@ -149,12 +271,44 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
                       ],
                     ),
                     onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Order ${order['id']} details'),
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
+                      try {
+                        final items = <Map<String, dynamic>>[];
+                        final itemsList = order['items'];
+                        if (itemsList is Map) {
+                          itemsList.forEach((key, item) {
+                            if (item is Map) {
+                              items.add(Map<String, dynamic>.from(item));
+                            }
+                          });
+                        } else if (itemsList is List) {
+                          for (var item in itemsList) {
+                            if (item is Map) {
+                              items.add(Map<String, dynamic>.from(item));
+                            }
+                          }
+                        }
+
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => OrderTrackerScreen(
+                              orderId: order['id'] ?? '',
+                              totalAmount: (order['total'] ?? 0.0).toDouble(),
+                              deliveryAddress:
+                                  order['deliveryAddress'] ?? 'N/A',
+                              paymentMethod: order['paymentMethod'] ?? 'N/A',
+                              items: items,
+                            ),
+                          ),
+                        );
+                      } catch (e) {
+                        logger.error('Error navigating to order: $e');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Error loading order details'),
+                          ),
+                        );
+                      }
                     },
                   ),
                 );

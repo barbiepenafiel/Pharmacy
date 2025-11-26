@@ -1,7 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'dart:async';
+import 'dart:io';
 import '../services/auth_service.dart';
+import '../services/firebase_service.dart';
+// ignore: unused_import
+import '../services/logger_service.dart';
+import 'admin_prescriptions_tab.dart';
+import 'order_tracker_screen.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+
+// Responsive Padding Constants - Mobile First
+// Tight: 4-6px (cards in grids, dense lists)
+// Normal: 8-12px (standard cards, containers)
+// Spacious: 16-24px (page-level, headers)
+const double kTightPadding = 4.0;
+const double kNormalPadding = 8.0;
+const double kSpaciousPadding = 16.0;
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -11,15 +26,59 @@ class AdminDashboardScreen extends StatefulWidget {
 }
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
-  late AuthService _authService;
+  final AuthService _authService = AuthService();
   int _selectedIndex = 0;
-
-  String get baseUrl => AuthService.baseUrl;
 
   @override
   void initState() {
     super.initState();
-    _authService = AuthService();
+    _checkAdminStatus();
+  }
+
+  Future<void> _checkAdminStatus() async {
+    final user = _authService.currentFirebaseUser;
+    if (user == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Not logged in! Please login as admin.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Check if user has admin role in database
+    try {
+      final userDoc = await FirebaseService().getUserProfile(user.uid);
+      final isAdmin = userDoc?['role'] == 'admin';
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isAdmin
+                  ? 'Logged in as admin: ${user.email}'
+                  : 'WARNING: Not admin! Role: ${userDoc?['role'] ?? "none"}',
+            ),
+            backgroundColor: isAdmin ? Colors.green : Colors.orange,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error checking admin status: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
   }
 
   void _handleLogout() {
@@ -48,19 +107,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final currentUser = _authService.getCurrentUser();
-
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.teal.shade700,
         title: const Text('Admin Dashboard'),
         elevation: 0,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'Check Admin Status',
+            onPressed: _checkAdminStatus,
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Center(
               child: Text(
-                currentUser?['fullName'] ?? 'Admin',
+                _authService.currentFirebaseUser?.displayName ?? 'Admin',
                 style: const TextStyle(fontSize: 14, color: Colors.white),
               ),
             ),
@@ -97,8 +159,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 label: Text('Orders'),
               ),
               NavigationRailDestination(
+                icon: Icon(Icons.medical_information),
+                label: Text('Prescriptions'),
+              ),
+              NavigationRailDestination(
                 icon: Icon(Icons.inventory_2),
                 label: Text('Inventory'),
+              ),
+              NavigationRailDestination(
+                icon: Icon(Icons.analytics),
+                label: Text('Reports'),
               ),
             ],
           ),
@@ -112,31 +182,38 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Widget _buildContent() {
     switch (_selectedIndex) {
       case 0:
-        return DashboardTab(baseUrl: baseUrl);
+        return const DashboardTab();
       case 1:
-        return ProductsTab(baseUrl: baseUrl);
+        return const ProductsTab();
       case 2:
-        return UsersTab(baseUrl: baseUrl);
+        return const UsersTab();
       case 3:
-        return OrdersTab(baseUrl: baseUrl);
+        return const OrdersTab();
       case 4:
-        return InventoryTab(baseUrl: baseUrl);
+        return const PrescriptionsTab();
+      case 5:
+        return const InventoryTab();
+      case 6:
+        return const ReportsTab();
       default:
-        return DashboardTab(baseUrl: baseUrl);
+        return const DashboardTab();
     }
   }
 }
 
 // Dashboard Tab
 class DashboardTab extends StatefulWidget {
-  final String baseUrl;
-  const DashboardTab({super.key, required this.baseUrl});
+  const DashboardTab({super.key});
 
   @override
   State<DashboardTab> createState() => _DashboardTabState();
 }
 
 class _DashboardTabState extends State<DashboardTab> {
+  final FirebaseService _firebaseService = FirebaseService();
+  StreamSubscription<List<Map<String, dynamic>>>? _ordersSubscription;
+
+  List<Map<String, dynamic>> orders = [];
   Map<String, dynamic>? stats;
   bool loading = true;
 
@@ -146,22 +223,26 @@ class _DashboardTabState extends State<DashboardTab> {
     _loadStats();
   }
 
+  @override
+  void dispose() {
+    _ordersSubscription?.cancel();
+    super.dispose();
+  }
+
   Future<void> _loadStats() async {
     try {
-      final response = await http
-          .get(
-            Uri.parse('${widget.baseUrl}/api/admin/dashboard-public'),
-            headers: {'Accept': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 5));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        setState(() {
-          stats = data;
-          loading = false;
-        });
-      }
+      // Watch orders in real-time
+      _ordersSubscription = _firebaseService.watchAllOrders().listen((
+        ordersList,
+      ) {
+        if (mounted) {
+          setState(() {
+            orders = ordersList;
+            stats = _calculateStats(ordersList);
+            loading = false;
+          });
+        }
+      });
     } catch (e) {
       setState(() {
         loading = false;
@@ -172,6 +253,46 @@ class _DashboardTabState extends State<DashboardTab> {
         );
       }
     }
+  }
+
+  Map<String, dynamic> _calculateStats(List<Map<String, dynamic>> orders) {
+    final now = DateTime.now();
+    final startOfDay = DateTime(now.year, now.month, now.day);
+
+    // Calculate today's sales
+    final todaysSales = orders
+        .where((order) {
+          final createdAt = order['createdAt'] as int?;
+          if (createdAt == null) return false;
+          final orderDate = DateTime.fromMillisecondsSinceEpoch(createdAt);
+          return orderDate.isAfter(startOfDay);
+        })
+        .fold<double>(
+          0,
+          (sum, order) => sum + ((order['total'] as num?)?.toDouble() ?? 0),
+        );
+
+    // Count pending orders
+    final pendingOrders = orders.where((o) => o['status'] == 'pending').length;
+
+    // Get recent orders (last 5)
+    final recentOrders = orders.take(5).map((order) {
+      return {
+        'orderNumber':
+            'Order #${order['id']?.toString().substring(0, 8) ?? 'N/A'}',
+        'customerName': order['userName'] ?? 'Unknown',
+        'status': order['status'] ?? 'pending',
+        'createdAt': order['createdAt'],
+      };
+    }).toList();
+
+    return {
+      'todaysSales': todaysSales,
+      'pendingOrders': pendingOrders,
+      'prescriptionsFilled': 0,
+      'recentOrders': recentOrders,
+      'topMedications': [],
+    };
   }
 
   @override
@@ -337,7 +458,7 @@ class _DashboardTabState extends State<DashboardTab> {
       elevation: 0,
       color: Colors.grey.shade50,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -345,31 +466,32 @@ class _DashboardTabState extends State<DashboardTab> {
             Text(
               label,
               style: const TextStyle(
-                fontSize: 9,
+                fontSize: 8,
                 fontWeight: FontWeight.w500,
                 color: Colors.grey,
               ),
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 1),
             Text(
               value,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 1),
             Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
                   trend.startsWith('+')
                       ? Icons.trending_up
                       : Icons.trending_down,
-                  size: 12,
+                  size: 11,
                   color: trendColor,
                 ),
                 const SizedBox(width: 4),
                 Text(
                   trend,
                   style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 9,
                     color: trendColor,
                     fontWeight: FontWeight.w500,
                   ),
@@ -539,14 +661,16 @@ class _DashboardTabState extends State<DashboardTab> {
 
 // Products Tab
 class ProductsTab extends StatefulWidget {
-  final String baseUrl;
-  const ProductsTab({super.key, required this.baseUrl});
+  const ProductsTab({super.key});
 
   @override
   State<ProductsTab> createState() => _ProductsTabState();
 }
 
 class _ProductsTabState extends State<ProductsTab> {
+  final FirebaseService _firebaseService = FirebaseService();
+  StreamSubscription<List<Map<String, dynamic>>>? _productsSubscription;
+
   List<dynamic> products = [];
   bool loading = true;
   String searchQuery = '';
@@ -557,24 +681,24 @@ class _ProductsTabState extends State<ProductsTab> {
     _loadProducts();
   }
 
+  @override
+  void dispose() {
+    _productsSubscription?.cancel();
+    super.dispose();
+  }
+
   Future<void> _loadProducts() async {
     try {
-      final response = await http
-          .get(
-            Uri.parse('${widget.baseUrl}/api/products'),
-            headers: {'Accept': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 5));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+      _productsSubscription = _firebaseService.watchProducts().listen((
+        productsList,
+      ) {
         if (mounted) {
           setState(() {
-            products = data['data'] ?? [];
+            products = productsList;
             loading = false;
           });
         }
-      }
+      });
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -622,215 +746,333 @@ class _ProductsTabState extends State<ProductsTab> {
     final imageUrlController = TextEditingController(
       text: product?['imageUrl'] ?? '',
     );
-    String imageSource = 'url'; // 'url' or 'manual'
+    String imageSource = 'url'; // 'url' or 'file'
+    File? selectedImageFile;
+    bool isUploadingImage = false;
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(product == null ? 'Add Product' : 'Edit Product'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Product Name *',
-                    helperText: 'Must be unique',
-                    helperStyle: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                ),
-                TextField(
-                  controller: descController,
-                  decoration: const InputDecoration(labelText: 'Description'),
-                ),
-                TextField(
-                  controller: dosageController,
-                  decoration: const InputDecoration(labelText: 'Dosage'),
-                ),
-                TextField(
-                  controller: categoryController,
-                  decoration: const InputDecoration(labelText: 'Category *'),
-                ),
-                TextField(
-                  controller: priceController,
-                  decoration: const InputDecoration(labelText: 'Price *'),
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                ),
-                TextField(
-                  controller: quantityController,
-                  decoration: const InputDecoration(labelText: 'Quantity'),
-                  keyboardType: TextInputType.number,
-                ),
-                TextField(
-                  controller: supplierController,
-                  decoration: const InputDecoration(labelText: 'Supplier'),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Product Image',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          setDialogState(() {
-                            imageSource = 'url';
-                          });
-                        },
-                        icon: const Icon(Icons.link),
-                        label: const Text('From URL'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: imageSource == 'url'
-                              ? Colors.teal
-                              : Colors.grey,
-                        ),
-                      ),
+        builder: (context, setDialogState) {
+          Future<void> pickImage() async {
+            try {
+              final ImagePicker picker = ImagePicker();
+              final XFile? image = await picker.pickImage(
+                source: ImageSource.gallery,
+                maxWidth: 1024,
+                maxHeight: 1024,
+                imageQuality: 85,
+              );
+
+              if (image != null) {
+                setDialogState(() {
+                  selectedImageFile = File(image.path);
+                  imageSource = 'file';
+                });
+              }
+            } catch (e) {
+              if (mounted) {
+                // ignore: use_build_context_synchronously
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Error picking image: $e')),
+                );
+              }
+            }
+          }
+
+          return AlertDialog(
+            title: Text(product == null ? 'Add Product' : 'Edit Product'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Product Name *',
+                      helperText: 'Must be unique',
+                      helperStyle: TextStyle(fontSize: 11, color: Colors.grey),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          setDialogState(() {
-                            imageSource = 'manual';
-                          });
-                        },
-                        icon: const Icon(Icons.upload_file),
-                        label: const Text('From File'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: imageSource == 'manual'
-                              ? Colors.teal
-                              : Colors.grey,
-                        ),
-                      ),
+                  ),
+                  TextField(
+                    controller: descController,
+                    decoration: const InputDecoration(labelText: 'Description'),
+                  ),
+                  TextField(
+                    controller: dosageController,
+                    decoration: const InputDecoration(labelText: 'Dosage'),
+                  ),
+                  TextField(
+                    controller: categoryController,
+                    decoration: const InputDecoration(labelText: 'Category *'),
+                  ),
+                  TextField(
+                    controller: priceController,
+                    decoration: const InputDecoration(labelText: 'Price *'),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
                     ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (imageSource == 'url')
-                  Column(
+                  ),
+                  TextField(
+                    controller: quantityController,
+                    decoration: const InputDecoration(labelText: 'Quantity'),
+                    keyboardType: TextInputType.number,
+                  ),
+                  TextField(
+                    controller: supplierController,
+                    decoration: const InputDecoration(labelText: 'Supplier'),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Product Image',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
                     children: [
-                      TextField(
-                        controller: imageUrlController,
-                        onChanged: (value) {
-                          setDialogState(() {});
-                        },
-                        decoration: const InputDecoration(
-                          labelText: 'Image URL',
-                          hintText: 'https://example.com/image.jpg',
-                          border: OutlineInputBorder(),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            setDialogState(() {
+                              imageSource = 'url';
+                            });
+                          },
+                          icon: const Icon(Icons.link),
+                          label: const Text('From URL'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: imageSource == 'url'
+                                ? Colors.teal
+                                : Colors.grey,
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      if (imageUrlController.text.isNotEmpty)
-                        Container(
-                          height: 150,
-                          width: 150,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.grey),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            setDialogState(() {
+                              imageSource = 'manual';
+                            });
+                          },
+                          icon: const Icon(Icons.upload_file),
+                          label: const Text('From File'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: imageSource == 'manual'
+                                ? Colors.teal
+                                : Colors.grey,
                           ),
-                          child: Image.network(
-                            imageUrlController.text,
-                            fit: BoxFit.cover,
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return const Center(
-                                child: CircularProgressIndicator(),
-                              );
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (imageSource == 'url')
+                    Column(
+                      children: [
+                        TextField(
+                          controller: imageUrlController,
+                          onChanged: (value) {
+                            setDialogState(() {});
+                          },
+                          decoration: const InputDecoration(
+                            labelText: 'Image URL',
+                            hintText: 'https://example.com/image.jpg',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        if (imageUrlController.text.isNotEmpty)
+                          Container(
+                            height: 150,
+                            width: 150,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.grey),
+                            ),
+                            child: Image.network(
+                              imageUrlController.text,
+                              fit: BoxFit.cover,
+                              loadingBuilder:
+                                  (context, child, loadingProgress) {
+                                    if (loadingProgress == null) return child;
+                                    return const Center(
+                                      child: CircularProgressIndicator(),
+                                    );
+                                  },
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const Center(
+                                    child: Icon(Icons.broken_image, size: 50),
+                                  ),
+                            ),
+                          ),
+                      ],
+                    )
+                  else if (imageSource == 'manual')
+                    Column(
+                      children: [
+                        if (selectedImageFile != null)
+                          Container(
+                            height: 150,
+                            width: 150,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.grey),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.file(
+                                selectedImageFile!,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          )
+                        else
+                          Container(
+                            width: 150,
+                            height: 150,
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey),
+                              borderRadius: BorderRadius.circular(8),
+                              color: Colors.grey.shade100,
+                            ),
+                            child: const Center(
+                              child: Icon(
+                                Icons.add_photo_alternate,
+                                size: 50,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          onPressed: pickImage,
+                          icon: const Icon(Icons.photo_library),
+                          label: const Text('Choose from Gallery'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.teal,
+                          ),
+                        ),
+                        if (selectedImageFile != null) ...[
+                          const SizedBox(height: 8),
+                          TextButton.icon(
+                            onPressed: () {
+                              setDialogState(() {
+                                selectedImageFile = null;
+                              });
                             },
-                            errorBuilder: (context, error, stackTrace) =>
-                                const Center(
-                                  child: Icon(Icons.broken_image, size: 50),
-                                ),
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('Remove Image'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.red,
+                            ),
                           ),
-                        ),
-                    ],
-                  )
-                else if (imageSource == 'manual')
-                  Column(
-                    children: [
-                      Container(
-                        width: 150,
-                        height: 150,
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey),
-                          borderRadius: BorderRadius.circular(8),
-                          color: Colors.grey.shade100,
-                        ),
-                        child: const Center(
-                          child: Icon(
-                            Icons.image_not_supported,
-                            size: 50,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Enter an Image URL to preview',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: imageUrlController,
-                        onChanged: (value) {
-                          setDialogState(() {});
-                        },
-                        decoration: const InputDecoration(
-                          labelText: 'Image URL',
-                          hintText: 'https://example.com/image.jpg',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
+                        ],
+                      ],
+                    ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                try {
-                  await _saveProduct(
-                    product?['id'],
-                    nameController.text,
-                    descController.text,
-                    dosageController.text,
-                    priceController.text,
-                    categoryController.text,
-                    quantityController.text,
-                    supplierController.text,
-                    imageUrlController.text,
-                  );
-                  // ignore: use_build_context_synchronously
-                  if (mounted) Navigator.pop(context);
-                } catch (e) {
-                  // If it's a duplicate name error, keep dialog open
-                  if (e.toString().contains('DUPLICATE_NAME')) {
-                    // Dialog stays open for user to correct the name
-                  } else {
-                    // For other errors, close the dialog
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  try {
+                    String finalImageUrl = imageUrlController.text;
+
+                    // If user picked a file, upload it to Firebase Storage first
+                    if (selectedImageFile != null) {
+                      setDialogState(() => isUploadingImage = true);
+
+                      try {
+                        final fileName =
+                            'products/${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+                        // Try default instance first
+                        final storageRef = FirebaseStorage.instance.ref().child(
+                          fileName,
+                        );
+
+                        logger.info('Uploading to: $fileName');
+
+                        // Upload the file
+                        final uploadTask = storageRef.putFile(
+                          selectedImageFile!,
+                        );
+
+                        // Wait for upload to complete
+                        final snapshot = await uploadTask;
+
+                        logger.info('Upload complete, getting URL...');
+
+                        // Get download URL from the completed upload
+                        finalImageUrl = await snapshot.ref.getDownloadURL();
+
+                        logger.info('Download URL: $finalImageUrl');
+                      } catch (e) {
+                        setDialogState(() => isUploadingImage = false);
+                        logger.error('Upload error: $e');
+                        // ignore: use_build_context_synchronously
+                        if (mounted) {
+                          // ignore: use_build_context_synchronously
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Storage not enabled. Please enable Firebase Storage in Firebase Console first.',
+                              ),
+                              duration: Duration(seconds: 5),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                        return;
+                      }
+
+                      setDialogState(() => isUploadingImage = false);
+                    }
+
+                    await _saveProduct(
+                      product?['id'],
+                      nameController.text,
+                      descController.text,
+                      dosageController.text,
+                      priceController.text,
+                      categoryController.text,
+                      quantityController.text,
+                      supplierController.text,
+                      finalImageUrl,
+                    );
                     // ignore: use_build_context_synchronously
                     if (mounted) Navigator.pop(context);
+                  } catch (e) {
+                    // If it's a duplicate name error, keep dialog open
+                    if (e.toString().contains('DUPLICATE_NAME')) {
+                      // Dialog stays open for user to correct the name
+                    } else {
+                      // For other errors, close the dialog
+                      // ignore: use_build_context_synchronously
+                      if (mounted) Navigator.pop(context);
+                    }
                   }
-                }
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        ),
+                },
+                child: isUploadingImage
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
+                        ),
+                      )
+                    : const Text('Save'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -877,126 +1119,72 @@ class _ProductsTabState extends State<ProductsTab> {
     }
 
     try {
-      final url = id == null
-          ? '${widget.baseUrl}/api/products'
-          : '${widget.baseUrl}/api/products/$id';
-
-      final body = {
+      final productData = {
         'name': name,
         'description': description,
         'dosage': dosage,
-        'price': price,
+        'price': double.tryParse(price) ?? 0.0,
         'category': category,
-        'quantity': quantity,
+        'quantity': int.tryParse(quantity) ?? 0,
         'supplier': supplier,
         'imageUrl': imageUrl,
+        'active': true,
       };
 
-      final response = id == null
-          ? await http.post(
-              Uri.parse(url),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode(body),
-            )
-          : await http.put(
-              Uri.parse(url),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode(body),
-            );
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = jsonDecode(response.body);
-        await _loadProducts(); // Reload products from database
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).clearSnackBars(); // Clear loading indicator
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.check_circle, color: Colors.white),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      id == null
-                          ? 'Product "${data['data']['name']}" added to database!'
-                          : 'Product "${data['data']['name']}" updated in database!',
-                    ),
-                  ),
-                ],
-              ),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
-      } else if (response.statusCode == 409) {
-        // Handle duplicate name error
-        final data = jsonDecode(response.body);
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).clearSnackBars(); // Clear loading indicator
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.error, color: Colors.white),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      '${data['error'] ?? 'Product name already exists'}. Please choose a different name.',
-                    ),
-                  ),
-                ],
-              ),
-              backgroundColor: Colors.orange.shade700,
-              duration: const Duration(seconds: 5),
-            ),
-          );
-        }
-        // Don't close the dialog - let user correct the name
-        throw Exception('DUPLICATE_NAME');
+      if (id == null) {
+        await _firebaseService.createProduct(productData);
       } else {
-        final data = jsonDecode(response.body);
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).clearSnackBars(); // Clear loading indicator
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.error, color: Colors.white),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(data['error'] ?? 'Failed to save product'),
+        await _firebaseService.updateProduct(id, productData);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    id == null
+                        ? 'Product "$name" added successfully!'
+                        : 'Product "$name" updated successfully!',
                   ),
-                ],
-              ),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 3),
+                ),
+              ],
             ),
-          );
-        }
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).clearSnackBars(); // Clear loading indicator
+        ScaffoldMessenger.of(context).clearSnackBars();
+
+        String errorMessage = 'Error saving product: ${e.toString()}';
+
+        // Check if it's a permission error
+        if (e.toString().contains('permission-denied')) {
+          errorMessage =
+              'Permission denied. Make sure:\n'
+              '1. You are logged in as admin\n'
+              '2. Firebase Database rules allow admin writes\n'
+              '3. Your user has admin role in the database';
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
               children: [
                 const Icon(Icons.error, color: Colors.white),
                 const SizedBox(width: 12),
-                Expanded(child: Text('Error saving product: ${e.toString()}')),
+                Expanded(child: Text(errorMessage)),
               ],
             ),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
+            duration: const Duration(seconds: 5),
           ),
         );
       }
@@ -1028,83 +1216,36 @@ class _ProductsTabState extends State<ProductsTab> {
     }
 
     try {
-      final response = await http
-          .delete(
-            Uri.parse('${widget.baseUrl}/api/products/$id'),
-            headers: {'Content-Type': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 10));
+      await _firebaseService.deleteProduct(id);
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        await _loadProducts(); // Reload products from database
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).clearSnackBars(); // Clear loading indicator
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.check_circle, color: Colors.white),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      data['message'] ??
-                          'Product deleted from database successfully!',
-                    ),
-                  ),
-                ],
-              ),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 3),
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 12),
+                Expanded(child: Text('Product deleted successfully!')),
+              ],
             ),
-          );
-        }
-      } else {
-        // Parse error response
-        String errorMessage = 'Failed to delete product';
-        try {
-          final data = jsonDecode(response.body);
-          errorMessage =
-              data['error'] ??
-              'Failed to delete product (Status: ${response.statusCode})';
-        } catch (e) {
-          errorMessage =
-              'Failed to delete product (Status: ${response.statusCode})';
-        }
-
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).clearSnackBars(); // Clear loading indicator
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.error, color: Colors.white),
-                  const SizedBox(width: 12),
-                  Expanded(child: Text(errorMessage)),
-                ],
-              ),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 4),
-            ),
-          );
-        }
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).clearSnackBars(); // Clear loading indicator
+        ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
               children: [
                 const Icon(Icons.error, color: Colors.white),
                 const SizedBox(width: 12),
-                Expanded(child: Text('Network error: ${e.toString()}')),
+                Expanded(
+                  child: Text('Error deleting product: ${e.toString()}'),
+                ),
               ],
             ),
             backgroundColor: Colors.red,
@@ -1178,7 +1319,7 @@ class _ProductsTabState extends State<ProductsTab> {
                           children: [
                             // Product Image - Fixed height
                             Container(
-                              height: 85,
+                              height: 80,
                               width: double.infinity,
                               decoration: BoxDecoration(
                                 color: Colors.grey.shade100,
@@ -1197,7 +1338,7 @@ class _ProductsTabState extends State<ProductsTab> {
                                               Center(
                                                 child: Icon(
                                                   Icons.broken_image,
-                                                  size: 40,
+                                                  size: 36,
                                                   color: Colors.grey.shade400,
                                                 ),
                                               ),
@@ -1205,7 +1346,7 @@ class _ProductsTabState extends State<ProductsTab> {
                                   : Center(
                                       child: Icon(
                                         Icons.image_not_supported,
-                                        size: 40,
+                                        size: 36,
                                         color: Colors.grey.shade400,
                                       ),
                                     ),
@@ -1213,7 +1354,7 @@ class _ProductsTabState extends State<ProductsTab> {
                             // Product Info - Takes remaining space
                             Expanded(
                               child: Padding(
-                                padding: const EdgeInsets.all(6),
+                                padding: const EdgeInsets.all(4),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   mainAxisSize: MainAxisSize.min,
@@ -1225,12 +1366,12 @@ class _ProductsTabState extends State<ProductsTab> {
                                       style: const TextStyle(
                                         fontWeight: FontWeight.bold,
                                         fontSize: 10,
-                                        height: 1.2,
+                                        height: 1.1,
                                       ),
                                     ),
-                                    const SizedBox(height: 2),
+                                    const SizedBox(height: 1),
                                     Text(
-                                      '₱${(product['price'] ?? 0).toStringAsFixed(2)}',
+                                      '₱${((product['price'] is int ? (product['price'] as int).toDouble() : product['price']) ?? 0).toStringAsFixed(2)}',
                                       style: TextStyle(
                                         color: Colors.teal.shade700,
                                         fontWeight: FontWeight.bold,
@@ -1243,7 +1384,7 @@ class _ProductsTabState extends State<ProductsTab> {
                                       children: [
                                         Expanded(
                                           child: SizedBox(
-                                            height: 22,
+                                            height: 18,
                                             child: ElevatedButton(
                                               onPressed: () => _showProductForm(
                                                 product: product,
@@ -1260,7 +1401,7 @@ class _ProductsTabState extends State<ProductsTab> {
                                               ),
                                               child: const Icon(
                                                 Icons.edit,
-                                                size: 12,
+                                                size: 10,
                                               ),
                                             ),
                                           ),
@@ -1268,7 +1409,7 @@ class _ProductsTabState extends State<ProductsTab> {
                                         const SizedBox(width: 4),
                                         Expanded(
                                           child: SizedBox(
-                                            height: 22,
+                                            height: 18,
                                             child: ElevatedButton(
                                               onPressed: () =>
                                                   _deleteProduct(product['id']),
@@ -1285,7 +1426,7 @@ class _ProductsTabState extends State<ProductsTab> {
                                               ),
                                               child: const Icon(
                                                 Icons.delete,
-                                                size: 12,
+                                                size: 10,
                                               ),
                                             ),
                                           ),
@@ -1413,7 +1554,7 @@ class _ProductsTabState extends State<ProductsTab> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          '₱${(product['price'] ?? 0).toStringAsFixed(2)}',
+                          '₱${((product['price'] is int ? (product['price'] as int).toDouble() : product['price']) ?? 0).toStringAsFixed(2)}',
                           style: TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
@@ -1528,7 +1669,14 @@ class _ProductsTabState extends State<ProductsTab> {
               ),
             ),
           ),
-          Expanded(child: Text(value, style: const TextStyle(fontSize: 15))),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 15),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );
@@ -1566,15 +1714,18 @@ class _ProductsTabState extends State<ProductsTab> {
 } // Users Tab
 
 class UsersTab extends StatefulWidget {
-  final String baseUrl;
-  const UsersTab({super.key, required this.baseUrl});
+  const UsersTab({super.key});
 
   @override
   State<UsersTab> createState() => _UsersTabState();
 }
 
 class _UsersTabState extends State<UsersTab> {
-  List<dynamic> users = [];
+  final FirebaseService _firebaseService = FirebaseService();
+  final AuthService _authService = AuthService();
+  StreamSubscription<List<Map<String, dynamic>>>? _usersSubscription;
+
+  List<Map<String, dynamic>> users = [];
   bool loading = true;
   String searchQuery = '';
   Set<String> selectedUsers = {};
@@ -1585,32 +1736,33 @@ class _UsersTabState extends State<UsersTab> {
     _loadUsers();
   }
 
-  Future<void> _loadUsers() async {
-    try {
-      final response = await http
-          .get(
-            Uri.parse('${widget.baseUrl}/api/users'),
-            headers: {'Accept': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 5));
+  @override
+  void dispose() {
+    _usersSubscription?.cancel();
+    super.dispose();
+  }
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        setState(() {
-          users = data is List ? data : (data['data'] ?? []);
-          loading = false;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        loading = false;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading users: ${e.toString()}')),
-        );
-      }
-    }
+  void _loadUsers() {
+    _usersSubscription = _firebaseService.watchAllUsers().listen(
+      (usersList) {
+        if (mounted) {
+          setState(() {
+            users = usersList;
+            loading = false;
+          });
+        }
+      },
+      onError: (error) {
+        if (mounted) {
+          setState(() {
+            loading = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error loading users: $error')),
+          );
+        }
+      },
+    );
   }
 
   List<dynamic> get filteredUsers {
@@ -1743,101 +1895,60 @@ class _UsersTabState extends State<UsersTab> {
       return;
     }
 
-    // Show loading indicator
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Text(id == null ? 'Adding user...' : 'Updating user...'),
-            ],
-          ),
-          duration: const Duration(seconds: 30),
-        ),
-      );
-    }
-
     try {
-      final url = id == null
-          ? '${widget.baseUrl}/api/users'
-          : '${widget.baseUrl}/api/users/$id';
+      if (id == null) {
+        // Create new user with Firebase Auth
+        await _authService.createUser(email, password, name, role);
+      } else {
+        // Update existing user
+        final userData = <String, dynamic>{
+          'name': name,
+          'email': email,
+          'role': role,
+        };
+        await _firebaseService.updateUser(id, userData);
 
-      final body = <String, dynamic>{
-        'name': name,
-        'email': email,
-        'role': role,
-      };
-
-      if (password.isNotEmpty) {
-        body['password'] = password;
+        // Update password if provided
+        if (password.isNotEmpty) {
+          // Note: Password update requires special handling in Firebase Auth
+          // For now, we'll just show a message that password updates require
+          // the user to reset their password via email
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Password updates require the user to reset via email',
+                ),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
+        }
       }
 
-      final response = id == null
-          ? await http.post(
-              Uri.parse(url),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode(body),
-            )
-          : await http.put(
-              Uri.parse(url),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode(body),
-            );
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        await _loadUsers();
-        if (mounted) {
-          ScaffoldMessenger.of(context).clearSnackBars();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.check_circle, color: Colors.white),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      id == null
-                          ? 'User "$name" added to database!'
-                          : 'User "$name" updated in database!',
-                    ),
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    id == null
+                        ? 'User "$name" added successfully!'
+                        : 'User "$name" updated successfully!',
                   ),
-                ],
-              ),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 3),
+                ),
+              ],
             ),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).clearSnackBars();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Row(
-                children: [
-                  Icon(Icons.error, color: Colors.white),
-                  SizedBox(width: 12),
-                  Expanded(child: Text('Failed to save user')),
-                ],
-              ),
-              backgroundColor: Colors.red,
-              duration: Duration(seconds: 3),
-            ),
-          );
-        }
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
@@ -1857,83 +1968,33 @@ class _UsersTabState extends State<UsersTab> {
 
   // Delete User
   Future<void> _deleteUser(String id) async {
-    // Show loading indicator
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Row(
-            children: [
-              SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              ),
-              SizedBox(width: 16),
-              Text('Deleting user...'),
-            ],
-          ),
-          duration: Duration(seconds: 30),
-        ),
-      );
-    }
-
     try {
-      final response = await http.delete(
-        Uri.parse('${widget.baseUrl}/api/users/$id'),
-        headers: {'Content-Type': 'application/json'},
-      );
+      await _firebaseService.deleteUser(id);
 
-      if (response.statusCode == 200) {
-        await _loadUsers();
-        if (mounted) {
-          ScaffoldMessenger.of(context).clearSnackBars();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Row(
-                children: [
-                  Icon(Icons.check_circle, color: Colors.white),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Text('User deleted from database successfully!'),
-                  ),
-                ],
-              ),
-              backgroundColor: Colors.green,
-              duration: Duration(seconds: 3),
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 12),
+                Expanded(child: Text('User deleted successfully!')),
+              ],
             ),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).clearSnackBars();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Row(
-                children: [
-                  Icon(Icons.error, color: Colors.white),
-                  SizedBox(width: 12),
-                  Expanded(child: Text('Failed to delete user')),
-                ],
-              ),
-              backgroundColor: Colors.red,
-              duration: Duration(seconds: 3),
-            ),
-          );
-        }
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
               children: [
                 const Icon(Icons.error, color: Colors.white),
                 const SizedBox(width: 12),
-                Expanded(child: Text('Network error: ${e.toString()}')),
+                Expanded(child: Text('Error deleting user: ${e.toString()}')),
               ],
             ),
             backgroundColor: Colors.red,
@@ -2147,7 +2208,14 @@ class _UsersTabState extends State<UsersTab> {
               ),
             ),
           ),
-          Expanded(child: Text(value, style: const TextStyle(fontSize: 15))),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 15),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );
@@ -2517,15 +2585,17 @@ class _UsersTabState extends State<UsersTab> {
 
 // Orders Tab
 class OrdersTab extends StatefulWidget {
-  final String baseUrl;
-  const OrdersTab({super.key, required this.baseUrl});
+  const OrdersTab({super.key});
 
   @override
   State<OrdersTab> createState() => _OrdersTabState();
 }
 
 class _OrdersTabState extends State<OrdersTab> {
-  List<dynamic> orders = [];
+  final FirebaseService _firebaseService = FirebaseService();
+  StreamSubscription<List<Map<String, dynamic>>>? _ordersSubscription;
+
+  List<Map<String, dynamic>> orders = [];
   bool loading = true;
   String searchQuery = '';
 
@@ -2535,32 +2605,33 @@ class _OrdersTabState extends State<OrdersTab> {
     _loadOrders();
   }
 
-  Future<void> _loadOrders() async {
-    try {
-      final response = await http
-          .get(
-            Uri.parse('${widget.baseUrl}/api/orders'),
-            headers: {'Accept': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 5));
+  @override
+  void dispose() {
+    _ordersSubscription?.cancel();
+    super.dispose();
+  }
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        setState(() {
-          orders = data is List ? data : (data['data'] ?? []);
-          loading = false;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        loading = false;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading orders: ${e.toString()}')),
-        );
-      }
-    }
+  void _loadOrders() {
+    _ordersSubscription = _firebaseService.watchAllOrders().listen(
+      (ordersList) {
+        if (mounted) {
+          setState(() {
+            orders = ordersList;
+            loading = false;
+          });
+        }
+      },
+      onError: (error) {
+        if (mounted) {
+          setState(() {
+            loading = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error loading orders: $error')),
+          );
+        }
+      },
+    );
   }
 
   List<dynamic> get filteredOrders {
@@ -2672,7 +2743,9 @@ class _OrdersTabState extends State<OrdersTab> {
   Widget _buildOrderCard(Map<String, dynamic> order) {
     final orderId = order['id'] ?? 'Unknown';
     final date = order['createdAt'] != null
-        ? DateTime.parse(order['createdAt']).toString().split(' ')[0]
+        ? DateTime.fromMillisecondsSinceEpoch(
+            order['createdAt'] as int,
+          ).toString().split(' ')[0]
         : 'N/A';
     final userName = order['user']?['name'] ?? 'Unknown Customer';
     final status = order['status'] ?? 'pending';
@@ -2921,8 +2994,8 @@ class _OrdersTabState extends State<OrdersTab> {
                       _buildOrderDetailRow(
                         'Date',
                         order['createdAt'] != null
-                            ? DateTime.parse(
-                                order['createdAt'],
+                            ? DateTime.fromMillisecondsSinceEpoch(
+                                order['createdAt'] as int,
                               ).toString().split(' ')[0]
                             : 'N/A',
                       ),
@@ -2940,38 +3013,76 @@ class _OrdersTabState extends State<OrdersTab> {
                     bottom: Radius.circular(16),
                   ),
                 ),
-                child: Row(
+                child: Column(
                   children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          _showUpdateStatusDialog(order);
-                        },
-                        icon: const Icon(Icons.edit),
-                        label: const Text('Update Status'),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          side: BorderSide(color: Colors.teal.shade700),
-                          foregroundColor: Colors.teal.shade700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
+                    // First Row: View Tracking
+                    SizedBox(
+                      width: double.infinity,
                       child: ElevatedButton.icon(
                         onPressed: () {
                           Navigator.pop(context);
-                          _confirmDelete(orderId, formattedOrderId);
+                          // Navigate to Order Tracker screen
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => OrderTrackerScreen(
+                                orderId: orderId,
+                                totalAmount: (order['total'] ?? 0.0).toDouble(),
+                                deliveryAddress:
+                                    order['deliveryAddress'] ?? 'N/A',
+                                paymentMethod: order['paymentMethod'] ?? 'N/A',
+                                items: List<Map<String, dynamic>>.from(
+                                  order['items'] ?? [],
+                                ),
+                              ),
+                            ),
+                          );
                         },
-                        icon: const Icon(Icons.delete),
-                        label: const Text('Delete'),
+                        icon: const Icon(Icons.location_on),
+                        label: const Text('View Tracking'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
+                          backgroundColor: Colors.teal.shade700,
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
                       ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Second Row: Update Status and Delete
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _showUpdateStatusDialog(order);
+                            },
+                            icon: const Icon(Icons.edit),
+                            label: const Text('Update Status'),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              side: BorderSide(color: Colors.teal.shade700),
+                              foregroundColor: Colors.teal.shade700,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _confirmDelete(orderId, formattedOrderId);
+                            },
+                            icon: const Icon(Icons.delete),
+                            label: const Text('Delete'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -3000,7 +3111,14 @@ class _OrdersTabState extends State<OrdersTab> {
               ),
             ),
           ),
-          Expanded(child: Text(value, style: const TextStyle(fontSize: 15))),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 15),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );
@@ -3077,47 +3195,22 @@ class _OrdersTabState extends State<OrdersTab> {
     }
 
     try {
-      final response = await http.put(
-        Uri.parse('${widget.baseUrl}/api/orders/$orderId'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'status': status}),
-      );
+      await _firebaseService.updateOrderStatus(orderId, status);
 
-      if (response.statusCode == 200) {
-        await _loadOrders();
-        if (mounted) {
-          ScaffoldMessenger.of(context).clearSnackBars();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Row(
-                children: [
-                  Icon(Icons.check_circle, color: Colors.white),
-                  SizedBox(width: 12),
-                  Expanded(child: Text('Order status updated successfully!')),
-                ],
-              ),
-              backgroundColor: Colors.green,
-              duration: Duration(seconds: 3),
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 12),
+                Expanded(child: Text('Order status updated successfully!')),
+              ],
             ),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).clearSnackBars();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Row(
-                children: [
-                  Icon(Icons.error, color: Colors.white),
-                  SizedBox(width: 12),
-                  Expanded(child: Text('Failed to update order status')),
-                ],
-              ),
-              backgroundColor: Colors.red,
-              duration: Duration(seconds: 3),
-            ),
-          );
-        }
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -3164,46 +3257,22 @@ class _OrdersTabState extends State<OrdersTab> {
     }
 
     try {
-      final response = await http.delete(
-        Uri.parse('${widget.baseUrl}/api/orders/$id'),
-        headers: {'Content-Type': 'application/json'},
-      );
+      await _firebaseService.deleteOrder(id);
 
-      if (response.statusCode == 200) {
-        await _loadOrders();
-        if (mounted) {
-          ScaffoldMessenger.of(context).clearSnackBars();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Row(
-                children: [
-                  Icon(Icons.check_circle, color: Colors.white),
-                  SizedBox(width: 12),
-                  Expanded(child: Text('Order deleted successfully!')),
-                ],
-              ),
-              backgroundColor: Colors.green,
-              duration: Duration(seconds: 3),
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 12),
+                Expanded(child: Text('Order deleted successfully!')),
+              ],
             ),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).clearSnackBars();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Row(
-                children: [
-                  Icon(Icons.error, color: Colors.white),
-                  SizedBox(width: 12),
-                  Expanded(child: Text('Failed to delete order')),
-                ],
-              ),
-              backgroundColor: Colors.red,
-              duration: Duration(seconds: 3),
-            ),
-          );
-        }
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -3256,613 +3325,757 @@ class _OrdersTabState extends State<OrdersTab> {
   }
 }
 
-// Inventory Tab
+// ==================== INVENTORY TAB ====================
 class InventoryTab extends StatefulWidget {
-  final String baseUrl;
-  const InventoryTab({super.key, required this.baseUrl});
+  const InventoryTab({super.key});
 
   @override
   State<InventoryTab> createState() => _InventoryTabState();
 }
 
 class _InventoryTabState extends State<InventoryTab> {
-  List<dynamic> inventory = [];
+  final FirebaseService _firebaseService = FirebaseService();
+  List<Map<String, dynamic>> products = [];
+  List<Map<String, dynamic>> filteredProducts = [];
   bool loading = true;
   String searchQuery = '';
+  String selectedFilter = 'All';
+
+  final List<String> filters = ['All', 'Low Stock', 'Expired', 'Supplier'];
 
   @override
   void initState() {
     super.initState();
-    _loadInventory();
+    _loadProducts();
   }
 
-  Future<void> _loadInventory() async {
+  Future<void> _loadProducts() async {
     try {
-      final response = await http
-          .get(
-            Uri.parse('${widget.baseUrl}/api/inventory'),
-            headers: {'Accept': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 5));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+      final allProducts = await _firebaseService.getAllProducts();
+      if (mounted) {
         setState(() {
-          inventory = data['data'] ?? [];
+          products = allProducts;
+          _applyFilters();
           loading = false;
         });
       }
     } catch (e) {
-      // Error loading inventory
-      setState(() => loading = false);
-    }
-  }
-
-  List<dynamic> get filteredInventory {
-    if (searchQuery.isEmpty) return inventory;
-    return inventory
-        .where(
-          (item) =>
-              item['name'].toLowerCase().contains(searchQuery.toLowerCase()) ||
-              item['dosage'].toLowerCase().contains(searchQuery.toLowerCase()),
-        )
-        .toList();
-  }
-
-  Future<void> _deleteItem(String id) async {
-    try {
-      final response = await http.delete(
-        Uri.parse('${widget.baseUrl}/api/inventory/$id'),
-      );
-
-      if (response.statusCode == 200) {
-        // ignore: use_build_context_synchronously
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Item deleted successfully')),
-        );
-        _loadInventory();
+      if (mounted) {
+        setState(() => loading = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error loading inventory: $e')));
       }
-    } catch (e) {
-      ScaffoldMessenger.of(
-        // ignore: use_build_context_synchronously
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error deleting item: $e')));
     }
   }
 
-  void _showAddDialog() {
-    final nameController = TextEditingController();
-    final dosageController = TextEditingController();
-    final quantityController = TextEditingController();
-    final supplierController = TextEditingController();
-    DateTime? selectedDate = DateTime.now().add(Duration(days: 365));
+  void _applyFilters() {
+    setState(() {
+      filteredProducts = products.where((product) {
+        // Apply search filter
+        if (searchQuery.isNotEmpty) {
+          final name = (product['name'] ?? '').toString().toLowerCase();
+          final query = searchQuery.toLowerCase();
+          if (!name.contains(query)) return false;
+        }
 
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Inventory Item'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: 'Medicine Name'),
-              ),
-              TextField(
-                controller: dosageController,
-                decoration: const InputDecoration(labelText: 'Dosage'),
-              ),
-              TextField(
-                controller: quantityController,
-                decoration: const InputDecoration(labelText: 'Quantity'),
-                keyboardType: TextInputType.number,
-              ),
-              TextField(
-                controller: supplierController,
-                decoration: const InputDecoration(labelText: 'Supplier'),
-              ),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.calendar_today),
-                label: Text(
-                  'Expiry: ${selectedDate?.toString().split(' ')[0] ?? 'Not set'}',
-                ),
-                onPressed: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: selectedDate ?? DateTime.now(),
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime(2100),
-                  );
-                  if (picked != null) {
-                    selectedDate = picked;
-                  }
-                },
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              try {
-                final response = await http.post(
-                  Uri.parse('${widget.baseUrl}/api/inventory'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode({
-                    'name': nameController.text,
-                    'dosage': dosageController.text,
-                    'quantity': int.parse(quantityController.text),
-                    'supplier': supplierController.text,
-                    'expiryDate': selectedDate?.toIso8601String(),
-                  }),
-                );
+        // Apply category filter
+        if (selectedFilter == 'Low Stock') {
+          final stock = product['stock'] ?? 0;
+          return stock < 20;
+        } else if (selectedFilter == 'Expired') {
+          // Check if product has expired
+          final expiresAt = product['expiresAt'];
+          if (expiresAt != null) {
+            final expiryDate = DateTime.fromMillisecondsSinceEpoch(expiresAt);
+            return expiryDate.isBefore(DateTime.now());
+          }
+          return false;
+        }
 
-                if (response.statusCode == 200) {
-                  // ignore: use_build_context_synchronously
-                  Navigator.pop(context);
-                  // ignore: use_build_context_synchronously
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Item added successfully')),
-                  );
-                  _loadInventory();
-                }
-              } catch (e) {
-                ScaffoldMessenger.of(
-                  // ignore: use_build_context_synchronously
-                  context,
-                ).showSnackBar(SnackBar(content: Text('Error: $e')));
-              }
-            },
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
+        return true;
+      }).toList();
+    });
+  }
+
+  Color _getStockColor(int stock) {
+    if (stock == 0) return Colors.red;
+    if (stock < 20) return Colors.orange;
+    return Colors.green;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
+    return Column(
       children: [
-        Column(
-          children: [
-            // Header with Search and Filters
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
+        // Header
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.shade200,
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Inventory',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              Row(
                 children: [
-                  // Search Bar
-                  SizedBox(
-                    height: 40,
-                    child: TextField(
-                      onChanged: (value) => setState(() => searchQuery = value),
-                      style: const TextStyle(fontSize: 13),
-                      decoration: InputDecoration(
-                        hintText: 'Search by name or code...',
-                        hintStyle: TextStyle(
-                          color: Colors.grey.shade400,
-                          fontSize: 13,
+                  // Search
+                  Expanded(
+                    flex: 2,
+                    child: Container(
+                      height: 45,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: TextField(
+                        onChanged: (value) {
+                          searchQuery = value;
+                          _applyFilters();
+                        },
+                        decoration: InputDecoration(
+                          hintText: 'Search by name or code...',
+                          prefixIcon: Icon(
+                            Icons.search,
+                            color: Colors.grey.shade600,
+                          ),
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
                         ),
-                        prefixIcon: Icon(
-                          Icons.search,
-                          color: Colors.grey.shade400,
-                          size: 20,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(color: Colors.teal.shade700),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 0,
-                        ),
-                        filled: true,
-                        fillColor: Colors.white,
-                        isDense: true,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  // Filter Chips
-                  Row(
-                    children: [
-                      _buildFilterChip('All', true),
-                      const SizedBox(width: 8),
-                      _buildFilterChip('Low Stock', false),
-                      const SizedBox(width: 8),
-                      _buildFilterChip('Expired', false),
-                      const SizedBox(width: 8),
-                      _buildFilterChip('Supplier', false),
-                    ],
+                  const SizedBox(width: 12),
+                  // Filters - wrapped to prevent overflow
+                  Expanded(
+                    flex: 3,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: filters.map((filter) {
+                          final isSelected = selectedFilter == filter;
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: FilterChip(
+                              label: Text(filter),
+                              selected: isSelected,
+                              onSelected: (selected) {
+                                setState(() {
+                                  selectedFilter = filter;
+                                  _applyFilters();
+                                });
+                              },
+                              backgroundColor: Colors.grey.shade200,
+                              selectedColor: Colors.teal.shade100,
+                              labelStyle: TextStyle(
+                                color: isSelected
+                                    ? Colors.teal.shade700
+                                    : Colors.black87,
+                                fontWeight: isSelected
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
                   ),
                 ],
               ),
-            ),
-            // Inventory List
-            Expanded(
-              child: loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : filteredInventory.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.medication_outlined,
-                            size: 64,
-                            color: Colors.grey.shade300,
+            ],
+          ),
+        ),
+        // Inventory List
+        Expanded(
+          child: loading
+              ? const Center(child: CircularProgressIndicator())
+              : filteredProducts.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.inventory_2,
+                        size: 64,
+                        color: Colors.grey.shade300,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'No products found',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: filteredProducts.length,
+                  itemBuilder: (context, index) {
+                    final product = filteredProducts[index];
+                    final stock = product['stock'] ?? 0;
+                    final name = product['name'] ?? 'Unknown';
+                    final supplier = product['supplier'] ?? 'Unknown Supplier';
+                    final expiresAt = product['expiresAt'];
+                    String expiryText = 'N/A';
+                    bool isExpired = false;
+
+                    if (expiresAt != null) {
+                      final expiryDate = DateTime.fromMillisecondsSinceEpoch(
+                        expiresAt,
+                      );
+                      expiryText =
+                          '${expiryDate.month.toString().padLeft(2, '0')}/${expiryDate.day.toString().padLeft(2, '0')}/${expiryDate.year}';
+                      isExpired = expiryDate.isBefore(DateTime.now());
+                    }
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        leading: Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(8),
                           ),
-                          const SizedBox(height: 16),
-                          Text(
-                            searchQuery.isEmpty
-                                ? 'No inventory items'
-                                : 'No items match your search',
+                          child: product['imageUrl'] != null
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(
+                                    product['imageUrl'],
+                                    fit: BoxFit.cover,
+                                    errorBuilder:
+                                        (context, error, stackTrace) => Icon(
+                                          Icons.medication,
+                                          color: Colors.teal.shade400,
+                                          size: 22,
+                                        ),
+                                  ),
+                                )
+                              : Icon(
+                                  Icons.medication,
+                                  color: Colors.teal.shade400,
+                                  size: 22,
+                                ),
+                        ),
+                        title: Text(
+                          name,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(height: 2),
+                            Text(
+                              'Supplier: $supplier',
+                              style: TextStyle(
+                                color: Colors.grey.shade600,
+                                fontSize: 11,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            Text(
+                              'Expires: $expiryText',
+                              style: TextStyle(
+                                color: isExpired
+                                    ? Colors.red
+                                    : Colors.grey.shade600,
+                                fontSize: 11,
+                                fontWeight: isExpired
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                        trailing: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _getStockColor(stock).withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '$stock Units',
                             style: TextStyle(
-                              color: Colors.grey.shade500,
-                              fontSize: 16,
+                              color: _getStockColor(stock),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
                             ),
                           ),
-                        ],
+                        ),
+                        onTap: () {
+                          // Show more details or edit
+                        },
                       ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      itemCount: filteredInventory.length,
-                      itemBuilder: (context, index) {
-                        final item = filteredInventory[index];
-                        return _buildInventoryCard(item);
-                      },
-                    ),
-            ),
-          ],
+                    );
+                  },
+                ),
         ),
-        // Floating Add Button
-        Positioned(
-          bottom: 20,
-          right: 20,
-          child: FloatingActionButton(
-            onPressed: _showAddDialog,
-            backgroundColor: Colors.green.shade500,
-            child: const Icon(Icons.add, color: Colors.white, size: 28),
+        // Add Product Button
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: FloatingActionButton.extended(
+            onPressed: () {
+              // Navigate to add product screen
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Use Products tab to add new items'),
+                ),
+              );
+            },
+            icon: const Icon(Icons.add),
+            label: const Text('Add Product'),
+            backgroundColor: Colors.teal.shade700,
           ),
         ),
       ],
     );
   }
+}
 
-  // Build Filter Chip
-  Widget _buildFilterChip(String label, bool isSelected) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        color: isSelected ? Colors.green.shade500 : Colors.grey.shade300,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          color: isSelected ? Colors.white : Colors.grey.shade700,
-        ),
-      ),
-    );
+// ==================== REPORTS TAB ====================
+class ReportsTab extends StatefulWidget {
+  const ReportsTab({super.key});
+
+  @override
+  State<ReportsTab> createState() => _ReportsTabState();
+}
+
+class _ReportsTabState extends State<ReportsTab> {
+  final FirebaseService _firebaseService = FirebaseService();
+  String selectedPeriod = 'Today';
+  Map<String, dynamic>? stats;
+  bool loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStats();
   }
 
-  // Build Inventory Card
-  Widget _buildInventoryCard(Map<String, dynamic> item) {
-    final status = item['status'] ?? 'in_stock';
-    final quantity = item['quantity'] ?? 0;
-
-    // Determine icon and colors based on status
-    Color iconBgColor;
-    Color iconColor;
-
-    if (status == 'expired') {
-      iconBgColor = Colors.red.shade50;
-      iconColor = Colors.red.shade700;
-    } else if (status == 'low_stock' || quantity < 10) {
-      iconBgColor = Colors.orange.shade50;
-      iconColor = Colors.orange.shade700;
-    } else {
-      iconBgColor = Colors.green.shade50;
-      iconColor = Colors.green.shade700;
+  Future<void> _loadStats() async {
+    try {
+      final statsData = await _firebaseService.getStats();
+      if (mounted) {
+        setState(() {
+          stats = statsData;
+          loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => loading = false);
+      }
     }
+  }
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      elevation: 1,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            // Icon with Status Indicator
-            Stack(
-              children: [
-                Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    color: iconBgColor,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(Icons.medication, color: iconColor, size: 28),
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          // Header
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.shade200,
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
                 ),
-                if (status == 'expired' || status == 'low_stock')
-                  Positioned(
-                    top: 0,
-                    right: 0,
-                    child: Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: status == 'expired'
-                            ? Colors.red.shade700
-                            : Colors.orange.shade700,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 1.5),
-                      ),
-                    ),
-                  ),
               ],
             ),
-            const SizedBox(width: 12),
-            // Medicine Details
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item['name'] ?? 'Unknown Medicine',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
+            child: Row(
+              children: [
+                const Icon(Icons.menu, size: 28),
+                const SizedBox(width: 16),
+                const Text(
+                  'Pharmacy Reports',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                IconButton(onPressed: () {}, icon: const Icon(Icons.refresh)),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Dashboard Title
+                const Text(
+                  'Dashboard',
+                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                // Period Selector - wrapped to prevent overflow
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _buildPeriodButton('Today'),
+                      const SizedBox(width: 8),
+                      _buildPeriodButton('This Week'),
+                      const SizedBox(width: 8),
+                      _buildPeriodButton('This Month'),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                // Stats Cards
+                if (loading)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(32),
+                      child: CircularProgressIndicator(),
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    'Supplier: ${item['supplier'] ?? 'N/A'}',
-                    style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
+                  )
+                else
                   Row(
                     children: [
-                      Text(
-                        'Expires: ',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.grey.shade600,
+                      Expanded(
+                        child: _buildStatCard(
+                          'Total Revenue',
+                          '\$${(stats?['totalSales'] ?? 12842).toStringAsFixed(0)}',
+                          '+8.2%',
+                          Colors.white,
                         ),
                       ),
-                      Text(
-                        item['expiryDate'] != null
-                            ? DateTime.parse(
-                                item['expiryDate'],
-                              ).toString().split(' ')[0]
-                            : 'N/A',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: status == 'expired'
-                              ? Colors.red.shade700
-                              : Colors.grey.shade600,
-                          fontWeight: status == 'expired'
-                              ? FontWeight.w600
-                              : FontWeight.normal,
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: _buildStatCard(
+                          'Prescriptions',
+                          '${stats?['totalPrescriptions'] ?? 1204}',
+                          '+3.1%',
+                          Colors.white,
                         ),
                       ),
                     ],
                   ),
-                ],
-              ),
-            ),
-            // Quantity Badge
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    '$quantity',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.teal.shade700,
+                const SizedBox(height: 24),
+                // Sales Trend Chart
+                _buildSalesTrendCard(),
+                const SizedBox(height: 24),
+                // Available Reports
+                const Text(
+                  'Available Reports',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                _buildReportCard(
+                  'Daily Sales Summary',
+                  'Track revenue and items sold',
+                  Icons.article,
+                  Colors.green.shade100,
+                  Colors.green.shade700,
+                ),
+                const SizedBox(height: 12),
+                _buildReportCard(
+                  'Inventory Movement',
+                  'Stock levels and expiry alerts',
+                  Icons.inventory_2,
+                  Colors.green.shade100,
+                  Colors.green.shade700,
+                ),
+                const SizedBox(height: 12),
+                _buildReportCard(
+                  'Staff Performance',
+                  'Sales by pharmacist',
+                  Icons.people,
+                  Colors.green.shade100,
+                  Colors.green.shade700,
+                ),
+                const SizedBox(height: 24),
+                // Generate Report Button
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Generating report...')),
+                      );
+                    },
+                    icon: const Icon(Icons.download),
+                    label: const Text(
+                      'Generate & Export Report',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.teal.shade600,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                   ),
-                  Text(
-                    'Units',
-                    style: TextStyle(fontSize: 9, color: Colors.grey.shade600),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            // More Options
-            IconButton(
-              icon: Icon(
-                Icons.more_vert,
-                size: 20,
-                color: Colors.grey.shade600,
-              ),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              onPressed: () => _showItemOptions(item),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Show Item Options Menu
-  void _showItemOptions(Map<String, dynamic> item) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.edit, color: Colors.blue),
-              title: const Text('Edit Item'),
-              onTap: () {
-                Navigator.pop(context);
-                _showEditDialog(item);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red),
-              title: const Text('Delete Item'),
-              onTap: () {
-                Navigator.pop(context);
-                _confirmDeleteItem(item['id'], item['name']);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Confirm Delete Item
-  void _confirmDeleteItem(String id, String itemName) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Item'),
-        content: Text(
-          'Are you sure you want to delete "$itemName"?\n\nThis action cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _deleteItem(id);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Delete'),
           ),
         ],
       ),
     );
   }
 
-  // Edit Dialog
-  void _showEditDialog(Map<String, dynamic> item) {
-    final nameController = TextEditingController(text: item['name']);
-    final dosageController = TextEditingController(text: item['dosage']);
-    final quantityController = TextEditingController(
-      text: item['quantity'].toString(),
+  Widget _buildPeriodButton(String period) {
+    final isSelected = selectedPeriod == period;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          selectedPeriod = period;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.grey.shade300 : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          period,
+          style: TextStyle(
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+            color: Colors.black87,
+          ),
+        ),
+      ),
     );
-    final supplierController = TextEditingController(text: item['supplier']);
-    DateTime? selectedDate = item['expiryDate'] != null
-        ? DateTime.parse(item['expiryDate'])
-        : DateTime.now().add(const Duration(days: 365));
+  }
 
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit Inventory Item'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+  Widget _buildStatCard(
+    String title,
+    String value,
+    String change,
+    Color bgColor,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            change,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Colors.green,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSalesTrendCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Sales Trend',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 4),
+          Row(
             children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: 'Medicine Name'),
-              ),
-              TextField(
-                controller: dosageController,
-                decoration: const InputDecoration(labelText: 'Dosage'),
-              ),
-              TextField(
-                controller: quantityController,
-                decoration: const InputDecoration(labelText: 'Quantity'),
-                keyboardType: TextInputType.number,
-              ),
-              TextField(
-                controller: supplierController,
-                decoration: const InputDecoration(labelText: 'Supplier'),
-              ),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.calendar_today),
-                label: Text(
-                  'Expiry: ${selectedDate?.toString().split(' ')[0] ?? 'Not set'}',
+              Text(
+                '\$8,921.50',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey.shade800,
                 ),
-                onPressed: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: selectedDate ?? DateTime.now(),
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime(2100),
-                  );
-                  if (picked != null) {
-                    selectedDate = picked;
-                  }
-                },
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Last 7 days',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
+              const Spacer(),
+              const Text(
+                '+12.5%',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.green,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+          const SizedBox(height: 20),
+          // Simple chart representation
+          SizedBox(
+            height: 150,
+            child: CustomPaint(
+              painter: SimpleLineChartPainter(),
+              child: Container(),
+            ),
           ),
-          ElevatedButton(
-            onPressed: () async {
-              // TODO: Implement update API call
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Edit functionality coming soon')),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((
+              day,
+            ) {
+              return Text(
+                day,
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
               );
-            },
-            child: const Text('Update'),
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReportCard(
+    String title,
+    String subtitle,
+    IconData icon,
+    Color bgColor,
+    Color iconColor,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: iconColor, size: 24),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 }
+
+// Simple Line Chart Painter
+class SimpleLineChartPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.green.shade300
+      ..strokeWidth = 2.5
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    // Sample data points for the week
+    final points = [
+      Offset(0, size.height * 0.6),
+      Offset(size.width * 0.14, size.height * 0.4),
+      Offset(size.width * 0.28, size.height * 0.5),
+      Offset(size.width * 0.42, size.height * 0.3),
+      Offset(size.width * 0.57, size.height * 0.45),
+      Offset(size.width * 0.71, size.height * 0.15),
+      Offset(size.width * 0.85, size.height * 0.35),
+      Offset(size.width, size.height * 0.25),
+    ];
+
+    final path = Path();
+    path.moveTo(points[0].dx, points[0].dy);
+
+    for (var i = 1; i < points.length; i++) {
+      path.lineTo(points[i].dx, points[i].dy);
+    }
+
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// Removed Inventory Tab - It was redundant with Products Tab which already provides inventory management

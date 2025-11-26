@@ -1,5 +1,7 @@
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
+// ignore: unused_import
+import 'logger_service.dart';
 
 class AuthService {
   static final AuthService _instance = AuthService._internal();
@@ -10,20 +12,20 @@ class AuthService {
 
   AuthService._internal();
 
-  // Backend URL - use local IP for emulator/real device, localhost for web
-  static String get baseUrl {
-    // For Android emulator: 10.0.2.2 is special alias for host machine localhost
-    // For physical device: use your local IP (run ipconfig to find it)
-    // For iOS simulator: use localhost or 127.0.0.1
-    return 'http://10.0.2.2:3000';
-  }
+  // Firebase instances
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseDatabase _database = FirebaseDatabase.instance;
 
-  // In-memory token storage
-  String? _authToken;
-  Map<String, dynamic>? _currentUser;
-  DateTime? _tokenExpiration;
+  // Cached user data
+  Map<String, dynamic>? _currentUserData;
 
-  /// Login user via backend API
+  /// Get current Firebase user
+  User? get currentFirebaseUser => _auth.currentUser;
+
+  /// Stream of authentication state changes
+  Stream<User?> get authStateChanges => _auth.authStateChanges();
+
+  /// Login user with email and password
   Future<({bool success, String message, String? fullName})> login({
     required String email,
     required String password,
@@ -38,82 +40,68 @@ class AuthService {
     }
 
     try {
-      // Call backend API
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/api/auth'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-            body: jsonEncode({
-              'action': 'login',
-              'email': email,
-              'password': password,
-            }),
-          )
-          .timeout(
-            const Duration(seconds: 10),
-            onTimeout: () =>
-                throw Exception('Connection timeout - backend not responding'),
-          );
+      // Sign in with Firebase Auth
+      final UserCredential userCredential = await _auth
+          .signInWithEmailAndPassword(email: email, password: password);
 
-      // Check if response is valid JSON
-      if (response.body.isEmpty) {
-        return (
-          success: false,
-          message: 'Server returned empty response',
-          fullName: null,
-        );
-      }
+      // Get user data from database
+      final userSnapshot = await _database
+          .ref()
+          .child('users')
+          .child(userCredential.user!.uid)
+          .get();
 
-      final Map<String, dynamic> responseData = jsonDecode(response.body);
-
-      if (response.statusCode == 200 && responseData['success'] == true) {
-        // Store token
-        _authToken = responseData['token'];
-
-        // Store token expiration (24 hours from now)
-        _tokenExpiration = DateTime.now().add(const Duration(hours: 24));
-
-        // Store user info
-        _currentUser = {
-          'id': responseData['user']['id'].toString(),
-          'email': responseData['user']['email'],
-          'fullName': responseData['user']['fullName'],
-          'isAdmin': responseData['user']['isAdmin'] ?? false,
-        };
+      if (userSnapshot.exists) {
+        _currentUserData = Map<String, dynamic>.from(userSnapshot.value as Map);
 
         return (
           success: true,
           message: 'Login successful',
-          fullName: responseData['user']['fullName'] as String?,
+          fullName: _currentUserData!['name'] as String?,
         );
       } else {
+        // User authenticated but no profile data
         return (
           success: false,
-          message:
-              responseData['message'] as String? ?? 'Invalid email or password',
+          message: 'User profile not found',
           fullName: null,
         );
       }
-    } on FormatException {
-      return (
-        success: false,
-        message:
-            'Server returned invalid data. Please check backend is running on $baseUrl',
-        fullName: null,
-      );
+    } on FirebaseAuthException catch (e) {
+      String message;
+      switch (e.code) {
+        case 'user-not-found':
+          message = 'No user found with this email';
+          break;
+        case 'wrong-password':
+          message = 'Incorrect password';
+          break;
+        case 'invalid-email':
+          message = 'Invalid email address';
+          break;
+        case 'user-disabled':
+          message = 'This account has been disabled';
+          break;
+        case 'too-many-requests':
+          message = 'Too many login attempts. Please try again later';
+          break;
+        case 'network-request-failed':
+          message = 'Network error. Please check your connection';
+          break;
+        default:
+          message = 'Login failed: ${e.message}';
+      }
+      return (success: false, message: message, fullName: null);
     } catch (e) {
       return (
         success: false,
-        message: 'Error connecting to server: ${e.toString()}',
+        message: 'Error: ${e.toString()}',
         fullName: null,
       );
     }
   }
 
-  /// Register user via backend API
+  /// Register new user
   Future<({bool success, String message})> register({
     required String fullName,
     required String email,
@@ -142,96 +130,145 @@ class AuthService {
     }
 
     try {
-      // Call backend API
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/api/auth'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-            body: jsonEncode({
-              'action': 'register',
-              'fullName': fullName,
-              'email': email,
-              'password': password,
-              'confirmPassword': confirmPassword,
-            }),
-          )
-          .timeout(
-            const Duration(seconds: 5),
-            onTimeout: () => throw Exception('Connection timeout'),
-          );
+      // Create user in Firebase Auth
+      final UserCredential userCredential = await _auth
+          .createUserWithEmailAndPassword(email: email, password: password);
 
-      final Map<String, dynamic> responseData = jsonDecode(response.body);
+      // Create user profile in database
+      await _database.ref().child('users').child(userCredential.user!.uid).set({
+        'email': email,
+        'name': fullName,
+        'role': 'customer', // Default role
+        'createdAt': ServerValue.timestamp,
+        'addresses': [],
+        'paymentMethods': [],
+      });
 
-      if ((response.statusCode == 200 || response.statusCode == 201) &&
-          responseData['success'] == true) {
-        return (
-          success: true,
-          message: 'Registration successful. Please login.',
-        );
-      } else {
-        return (
-          success: false,
-          message: responseData['message'] as String? ?? 'Registration failed',
-        );
+      // Update display name in Firebase Auth
+      await userCredential.user!.updateDisplayName(fullName);
+
+      return (success: true, message: 'Registration successful');
+    } on FirebaseAuthException catch (e) {
+      String message;
+      switch (e.code) {
+        case 'email-already-in-use':
+          message = 'An account already exists with this email';
+          break;
+        case 'invalid-email':
+          message = 'Invalid email address';
+          break;
+        case 'weak-password':
+          message = 'Password is too weak';
+          break;
+        case 'network-request-failed':
+          message = 'Network error. Please check your connection';
+          break;
+        default:
+          message = 'Registration failed: ${e.message}';
       }
+      return (success: false, message: message);
     } catch (e) {
-      return (
-        success: false,
-        message: 'Error connecting to server: ${e.toString()}',
-      );
+      return (success: false, message: 'Error: ${e.toString()}');
     }
   }
 
-  /// Get current auth token
-  String? getAuthToken() {
-    return _authToken;
+  /// Create user (admin function)
+  Future<void> createUser(
+    String email,
+    String password,
+    String name,
+    String role,
+  ) async {
+    try {
+      // Create user in Firebase Auth
+      final UserCredential userCredential = await _auth
+          .createUserWithEmailAndPassword(email: email, password: password);
+
+      // Create user profile in database
+      await _database.ref().child('users').child(userCredential.user!.uid).set({
+        'email': email,
+        'name': name,
+        'role': role,
+        'createdAt': ServerValue.timestamp,
+        'addresses': [],
+        'paymentMethods': [],
+      });
+
+      // Update display name in Firebase Auth
+      await userCredential.user!.updateDisplayName(name);
+
+      // Sign out the newly created user (admin should remain signed in)
+      // Note: This is a limitation - creating a user signs in as that user
+      // For production, you'd need Firebase Admin SDK on a backend
+    } on FirebaseAuthException catch (e) {
+      throw Exception(e.message ?? 'Failed to create user');
+    } catch (e) {
+      throw Exception('Error creating user: $e');
+    }
   }
 
-  /// Get current logged-in user
-  Map<String, dynamic>? getCurrentUser() {
-    return _currentUser;
+  /// Get current auth token (for compatibility)
+  Future<String?> getAuthToken() async {
+    final user = _auth.currentUser;
+    if (user != null) {
+      return await user.getIdToken();
+    }
+    return null;
+  }
+
+  /// Get current logged-in user data
+  Future<Map<String, dynamic>?> getCurrentUser() async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+
+    // Return cached data if available
+    if (_currentUserData != null) {
+      return _currentUserData;
+    }
+
+    // Fetch from database
+    try {
+      final userSnapshot = await _database
+          .ref()
+          .child('users')
+          .child(user.uid)
+          .get();
+
+      if (userSnapshot.exists) {
+        _currentUserData = Map<String, dynamic>.from(userSnapshot.value as Map);
+        return _currentUserData;
+      }
+    } catch (e) {
+      logger.error('Error fetching user data: $e');
+    }
+
+    return null;
   }
 
   /// Check if current user is admin
-  bool isAdmin() {
-    return _currentUser?['isAdmin'] ?? false;
+  Future<bool> isAdmin() async {
+    final userData = await getCurrentUser();
+    // Check both 'isAdmin' field (new format) and 'role' field (legacy format)
+    return userData?['isAdmin'] == true || userData?['role'] == 'admin';
   }
 
-  /// Get authentication token
-  String? get token => _authToken;
+  /// Get authentication token (for compatibility)
+  Future<String?> get token => getAuthToken();
 
   /// Check if user is logged in
   bool isLoggedIn() {
-    // Check if token exists and hasn't expired
-    if (_authToken == null || _currentUser == null) {
-      return false;
-    }
-
-    // Auto-logout if token expired
-    if (isTokenExpired()) {
-      logout();
-      return false;
-    }
-
-    return true;
+    return _auth.currentUser != null;
   }
 
-  /// Check if token has expired
+  /// Check if token has expired (Firebase handles this automatically)
   bool isTokenExpired() {
-    if (_tokenExpiration == null) {
-      return true; // No expiration set, consider expired
-    }
-    return DateTime.now().isAfter(_tokenExpiration!);
+    return _auth.currentUser == null;
   }
 
   /// Logout user
-  void logout() {
-    _authToken = null;
-    _currentUser = null;
-    _tokenExpiration = null;
+  Future<void> logout() async {
+    await _auth.signOut();
+    _currentUserData = null;
   }
 
   /// Validate email format
@@ -240,5 +277,150 @@ class AuthService {
       r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
     );
     return emailRegex.hasMatch(email);
+  }
+
+  /// Check if currently in offline/demo mode
+  bool isOfflineMode() {
+    // Firebase works offline automatically with persistence
+    return false;
+  }
+
+  /// Send password reset email
+  Future<({bool success, String message})> sendPasswordResetEmail({
+    required String email,
+  }) async {
+    if (email.isEmpty) {
+      return (success: false, message: 'Email is required');
+    }
+
+    if (!_isValidEmail(email)) {
+      return (success: false, message: 'Please enter a valid email address');
+    }
+
+    try {
+      await _auth.sendPasswordResetEmail(email: email);
+      return (
+        success: true,
+        message: 'Password reset email sent. Please check your inbox.',
+      );
+    } on FirebaseAuthException catch (e) {
+      String message;
+      switch (e.code) {
+        case 'user-not-found':
+          message = 'No user found with this email';
+          break;
+        case 'invalid-email':
+          message = 'Invalid email address';
+          break;
+        default:
+          message = 'Failed to send reset email: ${e.message}';
+      }
+      return (success: false, message: message);
+    } catch (e) {
+      return (success: false, message: 'Error: ${e.toString()}');
+    }
+  }
+
+  /// Update user profile
+  Future<({bool success, String message})> updateProfile({
+    String? name,
+    String? photoUrl,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      return (success: false, message: 'No user logged in');
+    }
+
+    try {
+      // Update Firebase Auth profile
+      if (name != null) {
+        await user.updateDisplayName(name);
+      }
+      if (photoUrl != null) {
+        await user.updatePhotoURL(photoUrl);
+      }
+
+      // Update database profile
+      final Map<String, dynamic> updates = {};
+      if (name != null) updates['name'] = name;
+      if (photoUrl != null) updates['photoUrl'] = photoUrl;
+      updates['updatedAt'] = ServerValue.timestamp;
+
+      await _database.ref().child('users').child(user.uid).update(updates);
+
+      // Clear cache to force refresh
+      _currentUserData = null;
+
+      return (success: true, message: 'Profile updated successfully');
+    } catch (e) {
+      return (
+        success: false,
+        message: 'Error updating profile: ${e.toString()}',
+      );
+    }
+  }
+
+  /// Delete user account
+  Future<({bool success, String message})> deleteAccount() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      return (success: false, message: 'No user logged in');
+    }
+
+    try {
+      // Delete user data from database
+      await _database.ref().child('users').child(user.uid).remove();
+
+      // Delete user from Firebase Auth
+      await user.delete();
+
+      _currentUserData = null;
+
+      return (success: true, message: 'Account deleted successfully');
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'requires-recent-login') {
+        return (
+          success: false,
+          message: 'Please login again before deleting your account',
+        );
+      }
+      return (success: false, message: 'Error deleting account: ${e.message}');
+    } catch (e) {
+      return (success: false, message: 'Error: ${e.toString()}');
+    }
+  }
+
+  /// Reauthenticate user (required for sensitive operations)
+  Future<({bool success, String message})> reauthenticate({
+    required String password,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) {
+      return (success: false, message: 'No user logged in');
+    }
+
+    try {
+      final credential = EmailAuthProvider.credential(
+        email: user.email!,
+        password: password,
+      );
+      await user.reauthenticateWithCredential(credential);
+      return (success: true, message: 'Reauthentication successful');
+    } on FirebaseAuthException catch (e) {
+      String message;
+      switch (e.code) {
+        case 'wrong-password':
+          message = 'Incorrect password';
+          break;
+        case 'user-mismatch':
+          message = 'Credential does not match current user';
+          break;
+        default:
+          message = 'Reauthentication failed: ${e.message}';
+      }
+      return (success: false, message: message);
+    } catch (e) {
+      return (success: false, message: 'Error: ${e.toString()}');
+    }
   }
 }

@@ -1,0 +1,118 @@
+{
+  "rules": {
+    // Users node - users can read/write their own data
+    "users": {
+      "$userId": {
+        ".read": "auth != null && (auth.uid === $userId || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+        ".write": "auth != null && (auth.uid === $userId || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+        ".validate": "newData.hasChildren(['email', 'name', 'role', 'createdAt'])",
+        "email": {
+          ".validate": "newData.isString() && newData.val().length > 0"
+        },
+        "name": {
+          ".validate": "newData.isString() && newData.val().length > 0"
+        },
+        "role": {
+          ".validate": "newData.val() === 'customer' || newData.val() === 'admin' || newData.val() === 'pharmacist'"
+        }
+      }
+    },
+    
+    // Products node - anyone can read, only admins can write
+    "products": {
+      ".read": true,
+      ".indexOn": ["category", "price", "name", "barcode"],
+      "$productId": {
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'",
+        ".validate": "newData.hasChildren(['name', 'price', 'category', 'stock'])",
+        "name": {
+          ".validate": "newData.isString() && newData.val().length > 0"
+        },
+        "price": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "stock": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        }
+      }
+    },
+    
+    // Orders node - users can read their own orders, admins can read all
+    "orders": {
+      ".indexOn": ["userId", "status", "createdAt"],
+      "$orderId": {
+        ".read": "auth != null && (data.child('userId').val() === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+        ".write": "auth != null && (
+          // Users can create new orders
+          (!data.exists() && newData.child('userId').val() === auth.uid) ||
+          // Admins can update existing orders
+          root.child('users').child(auth.uid).child('role').val() === 'admin'
+        )",
+        ".validate": "newData.hasChildren(['userId', 'items', 'total', 'status', 'createdAt'])",
+        "userId": {
+          ".validate": "newData.isString()"
+        },
+        "total": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "status": {
+          ".validate": "newData.val() === 'pending' || newData.val() === 'processing' || newData.val() === 'shipped' || newData.val() === 'delivered' || newData.val() === 'cancelled'"
+        }
+      }
+    },
+    
+    // Prescriptions node - users can read/write their own, admins can read/write all
+    "prescriptions": {
+      ".indexOn": ["userId", "status", "createdAt"],
+      "$prescriptionId": {
+        ".read": "auth != null && (data.child('userId').val() === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+        ".write": "auth != null && (
+          // Users can create new prescriptions
+          (!data.exists() && newData.child('userId').val() === auth.uid) ||
+          // Users can update their own prescriptions if status is pending
+          (data.child('userId').val() === auth.uid && data.child('status').val() === 'pending') ||
+          // Admins can update any prescription
+          root.child('users').child(auth.uid).child('role').val() === 'admin'
+        )",
+        ".validate": "newData.hasChildren(['userId', 'imageUrl', 'status', 'createdAt'])",
+        "status": {
+          ".validate": "newData.val() === 'pending' || newData.val() === 'approved' || newData.val() === 'rejected'"
+        }
+      }
+    },
+    
+    // Categories node - anyone can read, only admins can write
+    "categories": {
+      ".read": true,
+      "$categoryId": {
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'",
+        ".validate": "newData.hasChildren(['name', 'icon'])",
+        "name": {
+          ".validate": "newData.isString() && newData.val().length > 0"
+        }
+      }
+    },
+    
+    // User orders index - users can read their own, admins can read all
+    "userOrders": {
+      "$userId": {
+        ".read": "auth != null && (auth.uid === $userId || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+        ".write": "auth != null && (auth.uid === $userId || root.child('users').child(auth.uid).child('role').val() === 'admin')"
+      }
+    },
+    
+    // Products by category index - anyone can read, only admins can write
+    "productsByCategory": {
+      ".read": true,
+      "$categoryId": {
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+      }
+    },
+    
+    // Stats node - anyone can read, only admins can write
+    "stats": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+    }
+  }
+}

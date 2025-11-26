@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/firebase_service.dart';
 
 class SavedAddressesScreen extends StatefulWidget {
   const SavedAddressesScreen({super.key});
@@ -8,23 +9,69 @@ class SavedAddressesScreen extends StatefulWidget {
 }
 
 class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
-  List<Map<String, dynamic>> addresses = [
-    {
-      'id': 1,
-      'type': 'Home',
-      'address': '123 Main Street, Apt 4B',
-      'city': 'New York, NY 10001',
-      'phone': '+1 (555) 123-4567',
-      'isDefault': true,
-    },
-    {
-      'id': 2,
-      'type': 'Work',
-      'address': '456 Corporate Plaza, Suite 200',
-      'city': 'New York, NY 10002',
-      'phone': '+1 (555) 987-6543',
-      'isDefault': false,
-    },
+  final FirebaseService _firebaseService = FirebaseService();
+  List<Map<String, dynamic>> addresses = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAddresses();
+  }
+
+  Future<void> _loadAddresses() async {
+    try {
+      setState(() => _isLoading = true);
+      final loadedAddresses = await _firebaseService.getUserAddresses();
+      setState(() {
+        addresses = loadedAddresses;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error loading addresses: $e')));
+      }
+    }
+  }
+
+  // Region 11 (Davao Region) Cities for dropdown
+  final List<String> _region11Cities = [
+    'Davao City',
+    'Tagum City',
+    'Panabo City',
+    'Island Garden City of Samal (IGACOS)',
+    'Digos City',
+    'Mati City',
+    'Asuncion',
+    'Braulio E. Dujali',
+    'Carmen',
+    'Kapalong',
+    'New Corella',
+    'San Isidro',
+    'Santo Tomas',
+    'Talaingod',
+    'Bansalan',
+    'Hagonoy',
+    'Kiblawan',
+    'Magsaysay',
+    'Malalag',
+    'Matanao',
+    'Padada',
+    'Santa Cruz',
+    'Sulop',
+    'Banaybanay',
+    'Baganga',
+    'Boston',
+    'Caraga',
+    'Cateel',
+    'Governor Generoso',
+    'Lupon',
+    'Manay',
+    'San Isidro (Davao Oriental)',
+    'Tarragona',
   ];
 
   void _showAddressDialog({Map<String, dynamic>? address}) {
@@ -32,94 +79,155 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
     final addressController = TextEditingController(
       text: address?['address'] ?? '',
     );
-    final cityController = TextEditingController(text: address?['city'] ?? '');
     final phoneController = TextEditingController(
       text: address?['phone'] ?? '',
     );
 
+    // Extract city from full city string if editing
+    String selectedCity = 'Davao City';
+    if (address != null && address['city'] != null) {
+      final cityText = address['city'] as String;
+      for (var city in _region11Cities) {
+        if (cityText.toLowerCase().contains(city.toLowerCase())) {
+          selectedCity = city;
+          break;
+        }
+      }
+    }
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(address == null ? 'Add Address' : 'Edit Address'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: typeController,
-                decoration: const InputDecoration(
-                  hintText: 'Address Type (Home/Work)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: addressController,
-                decoration: const InputDecoration(
-                  hintText: 'Street Address',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: cityController,
-                decoration: const InputDecoration(
-                  hintText: 'City, State ZIP',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: phoneController,
-                decoration: const InputDecoration(
-                  hintText: 'Phone Number',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (address == null) {
-                setState(() {
-                  addresses.add({
-                    'id': DateTime.now().millisecondsSinceEpoch,
-                    'type': typeController.text,
-                    'address': addressController.text,
-                    'city': cityController.text,
-                    'phone': phoneController.text,
-                    'isDefault': false,
-                  });
-                });
-              } else {
-                setState(() {
-                  address['type'] = typeController.text;
-                  address['address'] = addressController.text;
-                  address['city'] = cityController.text;
-                  address['phone'] = phoneController.text;
-                });
-              }
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    address == null
-                        ? 'Address added successfully'
-                        : 'Address updated successfully',
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(address == null ? 'Add Address' : 'Edit Address'),
+          content: SizedBox(
+            width: MediaQuery.of(context).size.width * 0.9,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: typeController,
+                    decoration: const InputDecoration(
+                      labelText: 'Address Type',
+                      hintText: 'e.g., Home, Work, Mom\'s House',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.label),
+                    ),
                   ),
-                  duration: const Duration(seconds: 2),
-                ),
-              );
-            },
-            child: const Text('Save'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: addressController,
+                    decoration: const InputDecoration(
+                      labelText: 'Street Address',
+                      hintText: 'Building, Street, Barangay',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.home),
+                    ),
+                    maxLines: 2,
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    // ignore: deprecated_member_use
+                    value: selectedCity,
+                    decoration: const InputDecoration(
+                      labelText: 'City/Municipality',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.location_city),
+                    ),
+                    isExpanded: true,
+                    items: _region11Cities.map((city) {
+                      return DropdownMenuItem(
+                        value: city,
+                        child: Text(
+                          city,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      setDialogState(() {
+                        selectedCity = value!;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: phoneController,
+                    decoration: const InputDecoration(
+                      labelText: 'Phone Number',
+                      hintText: '+63 917 123 4567',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.phone),
+                    ),
+                    keyboardType: TextInputType.phone,
+                  ),
+                ],
+              ),
+            ),
           ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                // Extract navigator and messenger BEFORE async operations
+                final nav = Navigator.of(context);
+                final messenger = ScaffoldMessenger.of(context);
+
+                try {
+                  if (address == null) {
+                    // Add new address
+                    await _firebaseService.addAddress({
+                      'type': typeController.text,
+                      'address': addressController.text,
+                      'city': '$selectedCity, Region 11',
+                      'phone': phoneController.text,
+                      'isDefault': false,
+                    });
+                  } else {
+                    // Update existing address
+                    await _firebaseService.updateAddress(address['id'], {
+                      'type': typeController.text,
+                      'address': addressController.text,
+                      'city': '$selectedCity, Region 11',
+                      'phone': phoneController.text,
+                    });
+                  }
+
+                  // Reload addresses
+                  await _loadAddresses();
+
+                  // Use stored navigator and messenger (no context needed)
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        address == null
+                            ? 'Address added successfully'
+                            : 'Address updated successfully',
+                      ),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                  
+                  nav.pop();
+                } catch (e) {
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text('Error saving address: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  nav.pop();
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -139,7 +247,9 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
         backgroundColor: Colors.teal.shade700,
         child: const Icon(Icons.add),
       ),
-      body: addresses.isEmpty
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : addresses.isEmpty
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -231,40 +341,74 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                                 ),
                                 PopupMenuItem(
                                   child: const Text('Delete'),
-                                  onTap: () {
-                                    setState(() {
-                                      addresses.removeAt(index);
-                                    });
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Address deleted successfully',
-                                        ),
-                                        duration: Duration(seconds: 2),
-                                      ),
-                                    );
+                                  onTap: () async {
+                                    try {
+                                      await _firebaseService.deleteAddress(
+                                        address['id'],
+                                      );
+                                      await _loadAddresses();
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'Address deleted successfully',
+                                            ),
+                                            duration: Duration(seconds: 2),
+                                          ),
+                                        );
+                                      }
+                                    } catch (e) {
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'Error deleting address: $e',
+                                            ),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      }
+                                    }
                                   },
                                 ),
                                 if (!address['isDefault'])
                                   PopupMenuItem(
                                     child: const Text('Set as Default'),
-                                    onTap: () {
-                                      setState(() {
-                                        for (var addr in addresses) {
-                                          addr['isDefault'] = false;
+                                    onTap: () async {
+                                      try {
+                                        await _firebaseService
+                                            .setDefaultAddress(address['id']);
+                                        await _loadAddresses();
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'Default address updated',
+                                              ),
+                                              duration: Duration(seconds: 2),
+                                            ),
+                                          );
                                         }
-                                        address['isDefault'] = true;
-                                      });
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            'Default address updated',
-                                          ),
-                                          duration: Duration(seconds: 2),
-                                        ),
-                                      );
+                                      } catch (e) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                'Error setting default: $e',
+                                              ),
+                                              backgroundColor: Colors.red,
+                                            ),
+                                          );
+                                        }
+                                      }
                                     },
                                   ),
                               ],

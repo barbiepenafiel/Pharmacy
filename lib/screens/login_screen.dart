@@ -37,17 +37,26 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (mounted) {
         if (result.success) {
-          // Check if user is admin
-          if (_authService.isAdmin()) {
-            // Navigate to admin dashboard
-            Navigator.of(context).pushReplacementNamed('/admin');
-          } else {
-            // Navigate to home screen
-            Navigator.of(context).pushReplacementNamed('/home');
+          // Check if user is admin (async method)
+          final isAdmin = await _authService.isAdmin();
+          if (mounted) {
+            if (isAdmin) {
+              // Navigate to admin dashboard
+              Navigator.of(context).pushReplacementNamed('/admin');
+            } else {
+              // Navigate to home screen
+              Navigator.of(context).pushReplacementNamed('/home');
+            }
           }
         } else {
           setState(() {
             _errorMessage = result.message;
+
+            // If it's a connection error, offer offline mode for admins
+            if (_errorMessage!.contains('Connection') ||
+                _errorMessage!.contains('timeout')) {
+              _showOfflineModeDialog(result.message);
+            }
           });
         }
       }
@@ -57,12 +66,18 @@ class _LoginScreenState extends State<LoginScreen> {
           _errorMessage =
               'Invalid response from server. Please check backend connection.';
         });
+        _showOfflineModeDialog(
+          'Server connection failed. You can continue in offline/demo mode (admin only).',
+        );
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _errorMessage = 'Error: ${e.toString()}';
         });
+        _showOfflineModeDialog(
+          'Connection error: ${e.toString()}\nYou can continue in demo mode for admin access.',
+        );
       }
     } finally {
       if (mounted) {
@@ -70,6 +85,101 @@ class _LoginScreenState extends State<LoginScreen> {
           _isLoading = false;
         });
       }
+    }
+  }
+
+  void _showOfflineModeDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Connection Issue'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(message),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Admin Demo Mode Available',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Use demo credentials:\n'
+                    'Email: admin@pharmacy.com\n'
+                    'Password: admin123',
+                    style: TextStyle(fontSize: 12, color: Colors.blue.shade600),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Try Again'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              // Set demo credentials
+              _emailController.text = 'admin@pharmacy.com';
+              _passwordController.text = 'admin123';
+              _handleLoginOffline();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue.shade700,
+            ),
+            child: const Text(
+              'Continue in Demo Mode',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleLoginOffline() async {
+    // Allow admin to access dashboard in offline/demo mode
+    // Try to login with the demo credentials
+    if (_emailController.text == 'admin@pharmacy.com' &&
+        _passwordController.text == 'admin123') {
+      // Try to login with Firebase (works offline with persistence)
+      final result = await _authService.login(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+
+      if (mounted) {
+        if (result.success) {
+          Navigator.of(context).pushReplacementNamed('/admin');
+        } else {
+          setState(() {
+            _errorMessage =
+                'Demo mode not available. Please ensure admin account exists in Firebase.';
+          });
+        }
+      }
+    } else {
+      setState(() {
+        _errorMessage =
+            'Invalid demo credentials. Use admin@pharmacy.com / admin123';
+      });
     }
   }
 
@@ -265,7 +375,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 12),
 
                 // Register Link
                 Row(

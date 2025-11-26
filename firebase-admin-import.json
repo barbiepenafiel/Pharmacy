@@ -1,0 +1,70 @@
+{
+  "users": {
+    "3lQ2bAQBxCXfxpJpg8w7GVrgaF52": {
+      "fullName": "Demo Admin",
+      "email": "admin@pharmacy.com",
+      "phone": "+1234567890",
+      "address": "Admin Office",
+      "isAdmin": true,
+      "createdAt": 1732665600000
+    }
+  },
+  "products": {
+    "prod001": {
+      "name": "Aspirin 500mg",
+      "description": "Pain reliever and fever reducer",
+      "price": 199.99,
+      "category": "Medicine",
+      "barcode": "1234567890123",
+      "stock": 100,
+      "active": true,
+      "imageUrl": "https://via.placeholder.com/150",
+      "createdAt": 1732665600000
+    },
+    "prod002": {
+      "name": "Vitamin C 1000mg",
+      "description": "Immune system support",
+      "price": 299.99,
+      "category": "Vitamins",
+      "barcode": "1234567890124",
+      "stock": 150,
+      "active": true,
+      "imageUrl": "https://via.placeholder.com/150",
+      "createdAt": 1732665600000
+    },
+    "prod003": {
+      "name": "Paracetamol 500mg",
+      "description": "Pain and fever relief",
+      "price": 89.99,
+      "category": "Medicine",
+      "barcode": "1234567890125",
+      "stock": 200,
+      "active": true,
+      "imageUrl": "https://via.placeholder.com/150",
+      "createdAt": 1732665600000
+    }
+  },
+  "categories": {
+    "cat001": {
+      "name": "Medicine",
+      "description": "Prescription and over-the-counter medications",
+      "icon": "medication"
+    },
+    "cat002": {
+      "name": "Vitamins",
+      "description": "Health supplements and vitamins",
+      "icon": "spa"
+    },
+    "cat003": {
+      "name": "Diabetes",
+      "description": "Diabetes management products",
+      "icon": "devices"
+    }
+  },
+  "stats": {
+    "totalUsers": 1,
+    "totalOrders": 0,
+    "totalSales": 0,
+    "lastUpdated": 1732665600000
+  }
+}

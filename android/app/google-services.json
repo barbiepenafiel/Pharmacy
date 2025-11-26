@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "1037829519344",
+    "firebase_url": "https://pharmacy-app-67eab-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "pharmacy-app-67eab",
+    "storage_bucket": "pharmacy-app-67eab.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1037829519344:android:9e7710fccebdc1274b4f35",
+        "android_client_info": {
+          "package_name": "com.example.pharmacy_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1037829519344-ngdnbk0k7500etkekc09goeqd8pllh8f.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD6wlcvZrGtfeGUJirSPT6c2xmTj45n7Qk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1037829519344-ngdnbk0k7500etkekc09goeqd8pllh8f.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -212,7 +212,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                       duration: const Duration(seconds: 2),
                     ),
                   );
-                  
+
                   nav.pop();
                 } catch (e) {
                   messenger.showSnackBar(

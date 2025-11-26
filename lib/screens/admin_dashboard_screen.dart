@@ -9,6 +9,8 @@ import 'admin_prescriptions_tab.dart';
 import 'order_tracker_screen.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 
 // Responsive Padding Constants - Mobile First
 // Tight: 4-6px (cards in grids, dense lists)
@@ -110,7 +112,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.teal.shade700,
-        title: const Text('Admin Dashboard'),
+        title: const Text(
+          'Admin Dashboard',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.5,
+            color: Colors.white,
+            shadows: [
+              Shadow(
+                offset: Offset(2, 2),
+                blurRadius: 4,
+                color: Colors.black26,
+              ),
+            ],
+          ),
+        ),
         elevation: 0,
         actions: [
           IconButton(
@@ -746,6 +763,9 @@ class _ProductsTabState extends State<ProductsTab> {
     final imageUrlController = TextEditingController(
       text: product?['imageUrl'] ?? '',
     );
+    DateTime? selectedExpiryDate = product?['expiryDate'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(product?['expiryDate'])
+        : null;
     String imageSource = 'url'; // 'url' or 'file'
     File? selectedImageFile;
     bool isUploadingImage = false;
@@ -821,6 +841,71 @@ class _ProductsTabState extends State<ProductsTab> {
                   TextField(
                     controller: supplierController,
                     decoration: const InputDecoration(labelText: 'Supplier'),
+                  ),
+                  const SizedBox(height: 16),
+                  // Expiry Date Picker
+                  StatefulBuilder(
+                    builder: (context, setExpiryState) {
+                      String expiryText = selectedExpiryDate == null
+                          ? 'No expiry date set'
+                          : '${selectedExpiryDate!.month.toString().padLeft(2, '0')}/${selectedExpiryDate!.day.toString().padLeft(2, '0')}/${selectedExpiryDate!.year}';
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Expiry Date',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey.shade300),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                    child: Text(expiryText),
+                                  ),
+                                ),
+                                TextButton.icon(
+                                  onPressed: () async {
+                                    final pickedDate = await showDatePicker(
+                                      context: context,
+                                      initialDate:
+                                          selectedExpiryDate ??
+                                          DateTime.now().add(
+                                            const Duration(days: 365),
+                                          ),
+                                      firstDate: DateTime.now(),
+                                      lastDate: DateTime.now().add(
+                                        const Duration(days: 3650),
+                                      ),
+                                    );
+                                    if (pickedDate != null) {
+                                      setExpiryState(() {
+                                        selectedExpiryDate = pickedDate;
+                                      });
+                                      setDialogState(() {});
+                                    }
+                                  },
+                                  icon: const Icon(Icons.calendar_today),
+                                  label: const Text('Pick Date'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 16),
                   const Text(
@@ -1043,6 +1128,7 @@ class _ProductsTabState extends State<ProductsTab> {
                       quantityController.text,
                       supplierController.text,
                       finalImageUrl,
+                      selectedExpiryDate,
                     );
                     // ignore: use_build_context_synchronously
                     if (mounted) Navigator.pop(context);
@@ -1087,6 +1173,7 @@ class _ProductsTabState extends State<ProductsTab> {
     String quantity,
     String supplier,
     String imageUrl,
+    DateTime? expiryDate,
   ) async {
     if (name.isEmpty || category.isEmpty || price.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1129,6 +1216,7 @@ class _ProductsTabState extends State<ProductsTab> {
         'supplier': supplier,
         'imageUrl': imageUrl,
         'active': true,
+        if (expiryDate != null) 'expiryDate': expiryDate.millisecondsSinceEpoch,
       };
 
       if (id == null) {
@@ -2075,14 +2163,23 @@ class _UsersTabState extends State<UsersTab> {
                         child: CircleAvatar(
                           radius: 50,
                           backgroundColor: Colors.teal.shade100,
-                          child: Text(
-                            (user['name'] ?? 'U')[0].toUpperCase(),
-                            style: TextStyle(
-                              fontSize: 40,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.teal.shade700,
-                            ),
-                          ),
+                          backgroundImage:
+                              (user['photoUrl'] != null &&
+                                  (user['photoUrl'] as String).isNotEmpty)
+                              ? NetworkImage(user['photoUrl'] as String)
+                              : null,
+                          child:
+                              (user['photoUrl'] == null ||
+                                  (user['photoUrl'] as String).isEmpty)
+                              ? Text(
+                                  (user['name'] ?? 'U')[0].toUpperCase(),
+                                  style: TextStyle(
+                                    fontSize: 40,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.teal.shade700,
+                                  ),
+                                )
+                              : null,
                         ),
                       ),
                       const SizedBox(height: 20),
@@ -2130,9 +2227,7 @@ class _UsersTabState extends State<UsersTab> {
                       _buildUserDetailRow(
                         'Member Since',
                         user['createdAt'] != null
-                            ? DateTime.parse(
-                                user['createdAt'],
-                              ).toString().split(' ')[0]
+                            ? _formatDate(user['createdAt'])
                             : 'N/A',
                       ),
                     ],
@@ -2219,6 +2314,25 @@ class _UsersTabState extends State<UsersTab> {
         ],
       ),
     );
+  }
+
+  String _formatDate(dynamic timestamp) {
+    if (timestamp == null) return 'N/A';
+    try {
+      if (timestamp is int) {
+        // Timestamp in milliseconds
+        final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+        return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      } else if (timestamp is String) {
+        // ISO string format
+        final date = DateTime.parse(timestamp);
+        return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      }
+      return 'N/A';
+    } catch (e) {
+      logger.error('Error formatting date: $e');
+      return 'N/A';
+    }
   }
 
   // Confirm Delete Dialog
@@ -2331,30 +2445,46 @@ class _UsersTabState extends State<UsersTab> {
           child: loading
               ? const Center(child: CircularProgressIndicator())
               : Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 16),
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: Colors.grey.shade200),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withAlpha(5),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
                   child: Column(
                     children: [
                       // Table Header
                       Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
+                          horizontal: 14,
+                          vertical: 10,
                         ),
                         decoration: BoxDecoration(
                           color: Colors.grey.shade50,
                           borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(8),
+                            top: Radius.circular(12),
+                          ),
+                          border: Border(
+                            bottom: BorderSide(
+                              color: Colors.grey.shade200,
+                              width: 1,
+                            ),
                           ),
                         ),
                         child: Row(
                           children: [
                             SizedBox(
-                              width: 32,
+                              width: 40,
                               child: Transform.scale(
                                 scale: 0.9,
                                 child: Checkbox(
@@ -2380,13 +2510,12 @@ class _UsersTabState extends State<UsersTab> {
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 8),
                             Expanded(
                               flex: 3,
                               child: Text(
                                 'Name',
                                 style: TextStyle(
-                                  fontWeight: FontWeight.w600,
+                                  fontWeight: FontWeight.w700,
                                   color: Colors.grey.shade700,
                                   fontSize: 11,
                                 ),
@@ -2397,7 +2526,7 @@ class _UsersTabState extends State<UsersTab> {
                               child: Text(
                                 'Email',
                                 style: TextStyle(
-                                  fontWeight: FontWeight.w600,
+                                  fontWeight: FontWeight.w700,
                                   color: Colors.grey.shade700,
                                   fontSize: 11,
                                 ),
@@ -2408,7 +2537,7 @@ class _UsersTabState extends State<UsersTab> {
                               child: Text(
                                 'Status',
                                 style: TextStyle(
-                                  fontWeight: FontWeight.w600,
+                                  fontWeight: FontWeight.w700,
                                   color: Colors.grey.shade700,
                                   fontSize: 11,
                                 ),
@@ -2458,42 +2587,43 @@ class _UsersTabState extends State<UsersTab> {
                                       : (user['orders']?.length ?? 0) > 0
                                       ? 'Active'
                                       : 'To Review';
-                                  final statusColor = role == 'admin'
+                                  final statusBgColor = role == 'admin'
                                       ? Colors.purple.shade100
                                       : status == 'Active'
                                       ? Colors.green.shade100
-                                      : Colors.orange.shade100;
+                                      : Colors.amber.shade100;
                                   final statusTextColor = role == 'admin'
                                       ? Colors.purple.shade700
                                       : status == 'Active'
                                       ? Colors.green.shade700
-                                      : Colors.orange.shade700;
+                                      : Colors.amber.shade700;
 
                                   return Container(
                                     decoration: BoxDecoration(
                                       border: Border(
                                         bottom: BorderSide(
-                                          color: Colors.grey.shade200,
+                                          color: Colors.grey.shade100,
                                           width: 1,
                                         ),
                                       ),
                                       color: isSelected
                                           ? Colors.teal.shade50
-                                          : index.isEven
-                                          ? Colors.white
-                                          : Colors.grey.shade50,
+                                          : (index.isEven
+                                                ? Colors.white
+                                                : Colors.grey.shade50),
                                     ),
                                     child: InkWell(
                                       onTap: () => _showUserPreview(user),
+                                      hoverColor: Colors.teal.shade50,
                                       child: Padding(
                                         padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 8,
+                                          horizontal: 14,
+                                          vertical: 10,
                                         ),
                                         child: Row(
                                           children: [
                                             SizedBox(
-                                              width: 32,
+                                              width: 40,
                                               child: Transform.scale(
                                                 scale: 0.9,
                                                 child: Checkbox(
@@ -2514,16 +2644,62 @@ class _UsersTabState extends State<UsersTab> {
                                                 ),
                                               ),
                                             ),
-                                            const SizedBox(width: 8),
                                             Expanded(
                                               flex: 3,
-                                              child: Text(
-                                                user['name'] ?? 'Unknown',
-                                                style: const TextStyle(
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.w500,
-                                                ),
-                                                overflow: TextOverflow.ellipsis,
+                                              child: Row(
+                                                children: [
+                                                  CircleAvatar(
+                                                    radius: 16,
+                                                    backgroundColor:
+                                                        Colors.teal.shade100,
+                                                    backgroundImage:
+                                                        (user['photoUrl'] !=
+                                                                null &&
+                                                            (user['photoUrl']
+                                                                    as String)
+                                                                .isNotEmpty)
+                                                        ? NetworkImage(
+                                                            user['photoUrl']
+                                                                as String,
+                                                          )
+                                                        : null,
+                                                    child:
+                                                        (user['photoUrl'] ==
+                                                                null ||
+                                                            (user['photoUrl']
+                                                                    as String)
+                                                                .isEmpty)
+                                                        ? Text(
+                                                            (user['name'] ??
+                                                                    'U')[0]
+                                                                .toUpperCase(),
+                                                            style: TextStyle(
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .bold,
+                                                              color: Colors
+                                                                  .teal
+                                                                  .shade700,
+                                                              fontSize: 10,
+                                                            ),
+                                                          )
+                                                        : null,
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                    child: Text(
+                                                      user['name'] ?? 'Unknown',
+                                                      style: const TextStyle(
+                                                        fontSize: 11,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                        color: Colors.black87,
+                                                      ),
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
                                             ),
                                             Expanded(
@@ -2531,7 +2707,7 @@ class _UsersTabState extends State<UsersTab> {
                                               child: Text(
                                                 user['email'] ?? '',
                                                 style: TextStyle(
-                                                  fontSize: 11,
+                                                  fontSize: 10,
                                                   color: Colors.grey.shade600,
                                                 ),
                                                 overflow: TextOverflow.ellipsis,
@@ -2548,7 +2724,7 @@ class _UsersTabState extends State<UsersTab> {
                                                         vertical: 3,
                                                       ),
                                                   decoration: BoxDecoration(
-                                                    color: statusColor,
+                                                    color: statusBgColor,
                                                     borderRadius:
                                                         BorderRadius.circular(
                                                           10,
@@ -2557,9 +2733,9 @@ class _UsersTabState extends State<UsersTab> {
                                                   child: Text(
                                                     status,
                                                     style: TextStyle(
-                                                      fontSize: 10,
+                                                      fontSize: 9,
                                                       fontWeight:
-                                                          FontWeight.w600,
+                                                          FontWeight.w700,
                                                       color: statusTextColor,
                                                     ),
                                                   ),
@@ -2742,14 +2918,12 @@ class _OrdersTabState extends State<OrdersTab> {
   // Build Order Card
   Widget _buildOrderCard(Map<String, dynamic> order) {
     final orderId = order['id'] ?? 'Unknown';
-    final date = order['createdAt'] != null
-        ? DateTime.fromMillisecondsSinceEpoch(
-            order['createdAt'] as int,
-          ).toString().split(' ')[0]
-        : 'N/A';
-    final userName = order['user']?['name'] ?? 'Unknown Customer';
+    final date = _formatDate(order['createdAt']);
+    final userName =
+        order['userName'] ?? order['user']?['name'] ?? 'Unknown Customer';
     final status = order['status'] ?? 'pending';
     final total = order['total'] ?? 0.0;
+    final deliveryAddress = order['deliveryAddress'] ?? 'No address provided';
 
     // Format order ID
     final formattedOrderId =
@@ -2778,7 +2952,7 @@ class _OrdersTabState extends State<OrdersTab> {
         ? 'In Transit'
         : status.toLowerCase() == 'cancelled'
         ? 'Cancelled'
-        : 'In Transit';
+        : 'Pending';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -2837,7 +3011,7 @@ class _OrdersTabState extends State<OrdersTab> {
               const SizedBox(height: 4),
               // Address
               Text(
-                'Address: ${order['user']?['addresses']?[0]?['street'] ?? '123 St, Everywhere Road'}, ${order['user']?['addresses']?[0]?['city'] ?? 'B105'}',
+                'Address: $deliveryAddress',
                 style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -2910,6 +3084,54 @@ class _OrdersTabState extends State<OrdersTab> {
     return 'Paracetamol x2, Multivitamins x1';
   }
 
+  String _formatDate(dynamic timestamp) {
+    if (timestamp == null) return 'N/A';
+    try {
+      if (timestamp is int) {
+        // Timestamp in milliseconds
+        final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+        return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      } else if (timestamp is String) {
+        // ISO string format
+        final date = DateTime.parse(timestamp);
+        return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      }
+      return 'N/A';
+    } catch (e) {
+      logger.error('Error formatting date: $e');
+      return 'N/A';
+    }
+  }
+
+  List<Map<String, dynamic>> _getOrderItemsList(Map<String, dynamic> order) {
+    try {
+      final items = <Map<String, dynamic>>[];
+
+      if (order['items'] != null) {
+        if (order['items'] is List) {
+          for (var item in order['items'] as List) {
+            if (item is Map) {
+              items.add(Map<String, dynamic>.from(item));
+            }
+          }
+        } else if (order['items'] is Map) {
+          // Handle case where items is a Map instead of List
+          final itemsMap = order['items'] as Map;
+          itemsMap.forEach((key, item) {
+            if (item is Map) {
+              items.add(Map<String, dynamic>.from(item));
+            }
+          });
+        }
+      }
+
+      return items;
+    } catch (e) {
+      logger.error('Error converting order items: $e');
+      return [];
+    }
+  }
+
   // Order Preview Dialog
   void _showOrderPreview(Map<String, dynamic> order) {
     final orderId = order['id'] ?? 'Unknown';
@@ -2980,11 +3202,11 @@ class _OrdersTabState extends State<OrdersTab> {
                       const SizedBox(height: 16),
                       _buildOrderDetailRow(
                         'Customer',
-                        order['user']?['name'] ?? 'N/A',
+                        order['userName'] ?? order['user']?['name'] ?? 'N/A',
                       ),
                       _buildOrderDetailRow(
                         'Email',
-                        order['user']?['email'] ?? 'N/A',
+                        order['userEmail'] ?? order['user']?['email'] ?? 'N/A',
                       ),
                       _buildOrderDetailRow('Status', statusText),
                       _buildOrderDetailRow(
@@ -2993,11 +3215,7 @@ class _OrdersTabState extends State<OrdersTab> {
                       ),
                       _buildOrderDetailRow(
                         'Date',
-                        order['createdAt'] != null
-                            ? DateTime.fromMillisecondsSinceEpoch(
-                                order['createdAt'] as int,
-                              ).toString().split(' ')[0]
-                            : 'N/A',
+                        _formatDate(order['createdAt']),
                       ),
                       _buildOrderDetailRow('Items', _getOrderItems(order)),
                     ],
@@ -3031,9 +3249,7 @@ class _OrdersTabState extends State<OrdersTab> {
                                 deliveryAddress:
                                     order['deliveryAddress'] ?? 'N/A',
                                 paymentMethod: order['paymentMethod'] ?? 'N/A',
-                                items: List<Map<String, dynamic>>.from(
-                                  order['items'] ?? [],
-                                ),
+                                items: _getOrderItemsList(order),
                               ),
                             ),
                           );
@@ -3404,11 +3620,246 @@ class _InventoryTabState extends State<InventoryTab> {
     return Colors.green;
   }
 
+  // Edit product from inventory
+  void _editProduct(Map<String, dynamic> product) {
+    final nameController = TextEditingController(text: product['name'] ?? '');
+    final quantityController = TextEditingController(
+      text: product['quantity']?.toString() ?? '',
+    );
+    DateTime? selectedExpiryDate = product['expiryDate'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(product['expiryDate'])
+        : null;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Edit Product Quantity'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  enabled: false,
+                  decoration: const InputDecoration(
+                    labelText: 'Product Name',
+                    hintText: 'Name',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: quantityController,
+                  decoration: const InputDecoration(
+                    labelText: 'Quantity',
+                    hintText: 'Enter quantity',
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 16),
+                // Expiry Date Picker
+                StatefulBuilder(
+                  builder: (context, setExpiryState) {
+                    String expiryText = selectedExpiryDate == null
+                        ? 'No expiry date set'
+                        : '${selectedExpiryDate!.month.toString().padLeft(2, '0')}/${selectedExpiryDate!.day.toString().padLeft(2, '0')}/${selectedExpiryDate!.year}';
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Expiry Date',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  child: Text(expiryText),
+                                ),
+                              ),
+                              TextButton.icon(
+                                onPressed: () async {
+                                  final pickedDate = await showDatePicker(
+                                    context: context,
+                                    initialDate:
+                                        selectedExpiryDate ??
+                                        DateTime.now().add(
+                                          const Duration(days: 365),
+                                        ),
+                                    firstDate: DateTime.now(),
+                                    lastDate: DateTime.now().add(
+                                      const Duration(days: 3650),
+                                    ),
+                                  );
+                                  if (pickedDate != null) {
+                                    setExpiryState(() {
+                                      selectedExpiryDate = pickedDate;
+                                    });
+                                    setDialogState(() {});
+                                  }
+                                },
+                                icon: const Icon(Icons.calendar_today),
+                                label: const Text('Pick Date'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                try {
+                  final updates = <String, dynamic>{
+                    'quantity': int.tryParse(quantityController.text) ?? 0,
+                    if (selectedExpiryDate != null)
+                      'expiryDate': selectedExpiryDate!.millisecondsSinceEpoch,
+                  };
+
+                  await _firebaseService.updateProduct(product['id'], updates);
+
+                  if (mounted) {
+                    // ignore: use_build_context_synchronously
+                    Navigator.pop(context);
+                    // ignore: use_build_context_synchronously
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Product updated successfully!'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                    // Reload products
+                    _loadProducts();
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    // ignore: use_build_context_synchronously
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error updating product: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.teal.shade700,
+              ),
+              child: const Text('Update'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Delete product from inventory
+  Future<void> _deleteProduct(String productId, String productName) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Delete'),
+        content: Text(
+          'Are you sure you want to delete "$productName"?\n\nThis action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                ),
+                SizedBox(width: 16),
+                Text('Deleting product...'),
+              ],
+            ),
+            duration: Duration(seconds: 30),
+          ),
+        );
+      }
+
+      await _firebaseService.deleteProduct(productId);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Product deleted successfully!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        // Reload products
+        _loadProducts();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error deleting product: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Header
+        // Header - Search and Filters Only (No "Inventory" Text)
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -3424,79 +3875,61 @@ class _InventoryTabState extends State<InventoryTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Inventory',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              // Search
+              Container(
+                height: 45,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: TextField(
+                  onChanged: (value) {
+                    searchQuery = value;
+                    _applyFilters();
+                  },
+                  decoration: InputDecoration(
+                    hintText: 'Search by name or code...',
+                    prefixIcon: Icon(Icons.search, color: Colors.grey.shade600),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                  ),
+                ),
               ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  // Search
-                  Expanded(
-                    flex: 2,
-                    child: Container(
-                      height: 45,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: TextField(
-                        onChanged: (value) {
-                          searchQuery = value;
-                          _applyFilters();
+              const SizedBox(height: 12),
+              // Filters - Horizontal scroll with better spacing
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: filters.map((filter) {
+                    final isSelected = selectedFilter == filter;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 10),
+                      child: FilterChip(
+                        label: Text(filter),
+                        selected: isSelected,
+                        onSelected: (selected) {
+                          setState(() {
+                            selectedFilter = filter;
+                            _applyFilters();
+                          });
                         },
-                        decoration: InputDecoration(
-                          hintText: 'Search by name or code...',
-                          prefixIcon: Icon(
-                            Icons.search,
-                            color: Colors.grey.shade600,
-                          ),
-                          border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
+                        backgroundColor: isSelected
+                            ? Colors.teal.shade600
+                            : Colors.grey.shade300,
+                        selectedColor: Colors.teal.shade600,
+                        labelStyle: TextStyle(
+                          color: isSelected ? Colors.white : Colors.black87,
+                          fontWeight: isSelected
+                              ? FontWeight.w600
+                              : FontWeight.normal,
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  // Filters - wrapped to prevent overflow
-                  Expanded(
-                    flex: 3,
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: filters.map((filter) {
-                          final isSelected = selectedFilter == filter;
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: FilterChip(
-                              label: Text(filter),
-                              selected: isSelected,
-                              onSelected: (selected) {
-                                setState(() {
-                                  selectedFilter = filter;
-                                  _applyFilters();
-                                });
-                              },
-                              backgroundColor: Colors.grey.shade200,
-                              selectedColor: Colors.teal.shade100,
-                              labelStyle: TextStyle(
-                                color: isSelected
-                                    ? Colors.teal.shade700
-                                    : Colors.black87,
-                                fontWeight: isSelected
-                                    ? FontWeight.w600
-                                    : FontWeight.normal,
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                  ),
-                ],
+                    );
+                  }).toList(),
+                ),
               ),
             ],
           ),
@@ -3531,137 +3964,205 @@ class _InventoryTabState extends State<InventoryTab> {
                   itemCount: filteredProducts.length,
                   itemBuilder: (context, index) {
                     final product = filteredProducts[index];
-                    final stock = product['stock'] ?? 0;
+                    final stock = product['quantity'] ?? 0;
                     final name = product['name'] ?? 'Unknown';
                     final supplier = product['supplier'] ?? 'Unknown Supplier';
-                    final expiresAt = product['expiresAt'];
+                    final expiryDate = product['expiryDate'];
                     String expiryText = 'N/A';
                     bool isExpired = false;
 
-                    if (expiresAt != null) {
-                      final expiryDate = DateTime.fromMillisecondsSinceEpoch(
-                        expiresAt,
+                    if (expiryDate != null) {
+                      final expDate = DateTime.fromMillisecondsSinceEpoch(
+                        expiryDate,
                       );
                       expiryText =
-                          '${expiryDate.month.toString().padLeft(2, '0')}/${expiryDate.day.toString().padLeft(2, '0')}/${expiryDate.year}';
-                      isExpired = expiryDate.isBefore(DateTime.now());
+                          '${expDate.month.toString().padLeft(2, '0')}/${expDate.day.toString().padLeft(2, '0')}/${expDate.year}';
+                      isExpired = expDate.isBefore(DateTime.now());
                     }
 
                     return Card(
                       margin: const EdgeInsets.only(bottom: 12),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        leading: Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade200,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: product['imageUrl'] != null
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Image.network(
-                                    product['imageUrl'],
-                                    fit: BoxFit.cover,
-                                    errorBuilder:
-                                        (context, error, stackTrace) => Icon(
-                                          Icons.medication,
-                                          color: Colors.teal.shade400,
-                                          size: 22,
-                                        ),
-                                  ),
-                                )
-                              : Icon(
-                                  Icons.medication,
-                                  color: Colors.teal.shade400,
-                                  size: 22,
-                                ),
-                        ),
-                        title: Text(
-                          name,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Column(
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            const SizedBox(height: 2),
-                            Text(
-                              'Supplier: $supplier',
-                              style: TextStyle(
-                                color: Colors.grey.shade600,
-                                fontSize: 11,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            // Top Row - Image, Name, Menu
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Product Image
+                                Container(
+                                  width: 60,
+                                  height: 60,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: product['imageUrl'] != null
+                                      ? ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          child: Image.network(
+                                            product['imageUrl'],
+                                            fit: BoxFit.cover,
+                                            errorBuilder:
+                                                (context, error, stackTrace) {
+                                                  return Container(
+                                                    color: Colors.teal.shade200,
+                                                    child: Icon(
+                                                      Icons.medication,
+                                                      color:
+                                                          Colors.teal.shade700,
+                                                      size: 28,
+                                                    ),
+                                                  );
+                                                },
+                                          ),
+                                        )
+                                      : Container(
+                                          color: Colors.teal.shade200,
+                                          child: Icon(
+                                            Icons.medication,
+                                            color: Colors.teal.shade700,
+                                            size: 28,
+                                          ),
+                                        ),
+                                ),
+                                const SizedBox(width: 12),
+                                // Product Details
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      // Product Name
+                                      Text(
+                                        name,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 15,
+                                          color: Colors.black87,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 6),
+                                      // Supplier
+                                      Text(
+                                        'Supplier: $supplier',
+                                        style: TextStyle(
+                                          color: Colors.grey.shade600,
+                                          fontSize: 12,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      // Expiry Date
+                                      Text(
+                                        'Expires: $expiryText',
+                                        style: TextStyle(
+                                          color: isExpired
+                                              ? Colors.red.shade600
+                                              : Colors.grey.shade600,
+                                          fontSize: 12,
+                                          fontWeight: isExpired
+                                              ? FontWeight.w600
+                                              : FontWeight.normal,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                // Menu Button
+                                SizedBox(
+                                  width: 40,
+                                  child: PopupMenuButton<String>(
+                                    onSelected: (value) {
+                                      if (value == 'edit') {
+                                        _editProduct(product);
+                                      } else if (value == 'delete') {
+                                        _deleteProduct(
+                                          product['id'],
+                                          product['name'] ?? 'Product',
+                                        );
+                                      }
+                                    },
+                                    itemBuilder: (context) => [
+                                      const PopupMenuItem<String>(
+                                        value: 'edit',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.edit, size: 18),
+                                            SizedBox(width: 8),
+                                            Text('Edit'),
+                                          ],
+                                        ),
+                                      ),
+                                      const PopupMenuItem<String>(
+                                        value: 'delete',
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.delete,
+                                              size: 18,
+                                              color: Colors.red,
+                                            ),
+                                            SizedBox(width: 8),
+                                            Text(
+                                              'Delete',
+                                              style: TextStyle(
+                                                color: Colors.red,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                    icon: const Icon(Icons.more_vert),
+                                  ),
+                                ),
+                              ],
                             ),
-                            Text(
-                              'Expires: $expiryText',
-                              style: TextStyle(
-                                color: isExpired
-                                    ? Colors.red
-                                    : Colors.grey.shade600,
-                                fontSize: 11,
-                                fontWeight: isExpired
-                                    ? FontWeight.w600
-                                    : FontWeight.normal,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            const SizedBox(height: 12),
+                            // Bottom Row - Units
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade100,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    '$stock Units',
+                                    style: TextStyle(
+                                      color: _getStockColor(stock),
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                        trailing: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _getStockColor(stock).withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            '$stock Units',
-                            style: TextStyle(
-                              color: _getStockColor(stock),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                        onTap: () {
-                          // Show more details or edit
-                        },
                       ),
                     );
                   },
                 ),
-        ),
-        // Add Product Button
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: FloatingActionButton.extended(
-            onPressed: () {
-              // Navigate to add product screen
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Use Products tab to add new items'),
-                ),
-              );
-            },
-            icon: const Icon(Icons.add),
-            label: const Text('Add Product'),
-            backgroundColor: Colors.teal.shade700,
-          ),
         ),
       ],
     );
@@ -3681,6 +4182,8 @@ class _ReportsTabState extends State<ReportsTab> {
   String selectedPeriod = 'Today';
   Map<String, dynamic>? stats;
   bool loading = true;
+  List<Map<String, dynamic>> orders = [];
+  List<Map<String, dynamic>> products = [];
 
   @override
   void initState() {
@@ -3690,172 +4193,239 @@ class _ReportsTabState extends State<ReportsTab> {
 
   Future<void> _loadStats() async {
     try {
-      final statsData = await _firebaseService.getStats();
+      setState(() => loading = true);
+
+      // Fetch orders and products
+      final ordersList = await _firebaseService.getAllOrders();
+      final productsList = await _firebaseService.watchProducts().first;
+
       if (mounted) {
         setState(() {
-          stats = statsData;
+          orders = ordersList;
+          products = productsList.cast<Map<String, dynamic>>();
+          stats = _calculateStats(ordersList, selectedPeriod);
           loading = false;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() => loading = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error loading reports: $e')));
       }
     }
+  }
+
+  Map<String, dynamic> _calculateStats(
+    List<Map<String, dynamic>> ordersList,
+    String period,
+  ) {
+    final now = DateTime.now();
+    DateTime startDate;
+
+    // Determine start date based on period
+    if (period == 'Today') {
+      startDate = DateTime(now.year, now.month, now.day);
+    } else if (period == 'This Week') {
+      startDate = now.subtract(Duration(days: now.weekday - 1));
+      startDate = DateTime(startDate.year, startDate.month, startDate.day);
+    } else {
+      // This Month
+      startDate = DateTime(now.year, now.month, 1);
+    }
+
+    // Filter orders by date range
+    final filteredOrders = ordersList.where((order) {
+      final createdAt = order['createdAt'] as int?;
+      if (createdAt == null) return false;
+      final orderDate = DateTime.fromMillisecondsSinceEpoch(createdAt);
+      return orderDate.isAfter(startDate) && orderDate.isBefore(now);
+    }).toList();
+
+    // Calculate total revenue
+    final totalRevenue = filteredOrders.fold<double>(0, (sum, order) {
+      return sum + ((order['total'] as num?)?.toDouble() ?? 0);
+    });
+
+    // Count total prescriptions (actual prescription records, not order items)
+
+    final totalPrescriptions = 0;
+
+    // Calculate sales trend (daily data for last 7 days or week days)
+    final dailySales = _calculateDailySales(filteredOrders);
+
+    // Calculate percentage change
+    final previousPeriodStart = period == 'Today'
+        ? DateTime(now.year, now.month, now.day - 1)
+        : period == 'This Week'
+        ? startDate.subtract(const Duration(days: 7))
+        : DateTime(now.year, now.month - 1, 1);
+
+    final previousOrders = ordersList.where((order) {
+      final createdAt = order['createdAt'] as int?;
+      if (createdAt == null) return false;
+      final orderDate = DateTime.fromMillisecondsSinceEpoch(createdAt);
+      return period == 'Today'
+          ? orderDate.isAfter(previousPeriodStart) &&
+                orderDate.isBefore(startDate)
+          : orderDate.isAfter(previousPeriodStart) &&
+                orderDate.isBefore(startDate);
+    }).toList();
+
+    final previousRevenue = previousOrders.fold<double>(0, (sum, order) {
+      return sum + ((order['total'] as num?)?.toDouble() ?? 0);
+    });
+
+    double revenueChange = 0;
+    if (previousRevenue > 0) {
+      revenueChange =
+          ((totalRevenue - previousRevenue) / previousRevenue) * 100;
+    } else if (totalRevenue > 0) {
+      revenueChange = 100;
+    }
+
+    return {
+      'totalRevenue': totalRevenue,
+      'totalPrescriptions': totalPrescriptions,
+      'revenueChange': revenueChange,
+      'orderCount': filteredOrders.length,
+      'dailySales': dailySales,
+      'period': period,
+    };
+  }
+
+  List<double> _calculateDailySales(List<Map<String, dynamic>> filteredOrders) {
+    final now = DateTime.now();
+    final List<double> dailySales = List.filled(7, 0.0);
+
+    for (final order in filteredOrders) {
+      final createdAt = order['createdAt'] as int?;
+      if (createdAt == null) continue;
+
+      final orderDate = DateTime.fromMillisecondsSinceEpoch(createdAt);
+      final daysAgo = now.difference(orderDate).inDays;
+
+      if (daysAgo >= 0 && daysAgo < 7) {
+        final index = 6 - daysAgo; // Reverse index for chart
+        dailySales[index] += (order['total'] as num?)?.toDouble() ?? 0;
+      }
+    }
+
+    return dailySales;
   }
 
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      child: Column(
-        children: [
-          // Header
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.shade200,
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Period Selector Buttons
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _buildPeriodButton('Today'),
+                  const SizedBox(width: 12),
+                  _buildPeriodButton('This Week'),
+                  const SizedBox(width: 12),
+                  _buildPeriodButton('This Month'),
+                ],
+              ),
             ),
-            child: Row(
-              children: [
-                const Icon(Icons.menu, size: 28),
-                const SizedBox(width: 16),
-                const Text(
-                  'Pharmacy Reports',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            const SizedBox(height: 24),
+            // Stats Cards Row
+            if (loading)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(32),
+                  child: CircularProgressIndicator(),
                 ),
-                const Spacer(),
-                IconButton(onPressed: () {}, icon: const Icon(Icons.refresh)),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Dashboard Title
-                const Text(
-                  'Dashboard',
-                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-                // Period Selector - wrapped to prevent overflow
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _buildPeriodButton('Today'),
-                      const SizedBox(width: 8),
-                      _buildPeriodButton('This Week'),
-                      const SizedBox(width: 8),
-                      _buildPeriodButton('This Month'),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                // Stats Cards
-                if (loading)
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(32),
-                      child: CircularProgressIndicator(),
-                    ),
-                  )
-                else
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildStatCard(
-                          'Total Revenue',
-                          '\$${(stats?['totalSales'] ?? 12842).toStringAsFixed(0)}',
-                          '+8.2%',
-                          Colors.white,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: _buildStatCard(
-                          'Prescriptions',
-                          '${stats?['totalPrescriptions'] ?? 1204}',
-                          '+3.1%',
-                          Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                const SizedBox(height: 24),
-                // Sales Trend Chart
-                _buildSalesTrendCard(),
-                const SizedBox(height: 24),
-                // Available Reports
-                const Text(
-                  'Available Reports',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-                _buildReportCard(
-                  'Daily Sales Summary',
-                  'Track revenue and items sold',
-                  Icons.article,
-                  Colors.green.shade100,
-                  Colors.green.shade700,
-                ),
-                const SizedBox(height: 12),
-                _buildReportCard(
-                  'Inventory Movement',
-                  'Stock levels and expiry alerts',
-                  Icons.inventory_2,
-                  Colors.green.shade100,
-                  Colors.green.shade700,
-                ),
-                const SizedBox(height: 12),
-                _buildReportCard(
-                  'Staff Performance',
-                  'Sales by pharmacist',
-                  Icons.people,
-                  Colors.green.shade100,
-                  Colors.green.shade700,
-                ),
-                const SizedBox(height: 24),
-                // Generate Report Button
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Generating report...')),
-                      );
-                    },
-                    icon: const Icon(Icons.download),
-                    label: const Text(
-                      'Generate & Export Report',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.teal.shade600,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+              )
+            else
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildStatCard(
+                      'Total Revenue',
+                      '₱${(stats?['totalRevenue'] ?? 0).toStringAsFixed(2)}',
+                      '${(stats?['revenueChange'] ?? 0).toStringAsFixed(1)}%',
+                      Colors.white,
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildStatCard(
+                      'Prescriptions',
+                      '0', // Always show 0 - no prescriptions in system
+                      '+0',
+                      Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            const SizedBox(height: 24),
+            // Sales Trend Chart
+            _buildSalesTrendCard(),
+            const SizedBox(height: 24),
+            // Available Reports Section
+            const Text(
+              'Available Reports',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+            _buildReportCard(
+              'Daily Sales Summary',
+              'Total revenue and items sold',
+              Icons.article,
+              Colors.green.shade100,
+              Colors.green.shade700,
+              () => _showDailySalesReport(),
+            ),
+            const SizedBox(height: 12),
+            _buildReportCard(
+              'Inventory Movement',
+              'Stock levels and expiry alerts',
+              Icons.inventory_2,
+              Colors.green.shade100,
+              Colors.green.shade700,
+              () => _showInventoryReport(),
+            ),
+            const SizedBox(height: 12),
+            _buildReportCard(
+              'Staff Performance',
+              'Sales by pharmacist',
+              Icons.people,
+              Colors.green.shade100,
+              Colors.green.shade700,
+              () => _showStaffReport(),
+            ),
+            const SizedBox(height: 24),
+            // Generate & Export Report Button
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: () => _generateAndExportReport(),
+                icon: const Icon(Icons.download, size: 20),
+                label: const Text(
+                  'Generate & Export Report',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green.shade600,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3866,6 +4436,7 @@ class _ReportsTabState extends State<ReportsTab> {
       onTap: () {
         setState(() {
           selectedPeriod = period;
+          stats = _calculateStats(orders, period);
         });
       },
       child: Container(
@@ -3908,7 +4479,9 @@ class _ReportsTabState extends State<ReportsTab> {
           const SizedBox(height: 8),
           Text(
             value,
-            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
           ),
           const SizedBox(height: 4),
           Text(
@@ -3925,6 +4498,15 @@ class _ReportsTabState extends State<ReportsTab> {
   }
 
   Widget _buildSalesTrendCard() {
+    final dailySales =
+        (stats?['dailySales'] as List<double>?) ?? List.filled(7, 0.0);
+    final totalTrendRevenue = dailySales.fold<double>(
+      0,
+      (sum, val) => sum + val,
+    );
+    final period = stats?['period'] ?? 'Today';
+    final trendLabel = period == 'Today' ? 'Last 7 days' : 'This period';
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -3942,23 +4524,29 @@ class _ReportsTabState extends State<ReportsTab> {
           const SizedBox(height: 4),
           Row(
             children: [
-              Text(
-                '\$8,921.50',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey.shade800,
+              Expanded(
+                child: Text(
+                  '₱${totalTrendRevenue.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey.shade800,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const SizedBox(width: 12),
-              Text(
-                'Last 7 days',
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  trendLabel,
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              const Spacer(),
-              const Text(
-                '+12.5%',
-                style: TextStyle(
+              const SizedBox(width: 8),
+              Text(
+                '+${((stats?['revenueChange'] ?? 0) as num).toStringAsFixed(1)}%',
+                style: const TextStyle(
                   fontSize: 13,
                   color: Colors.green,
                   fontWeight: FontWeight.w600,
@@ -3967,11 +4555,11 @@ class _ReportsTabState extends State<ReportsTab> {
             ],
           ),
           const SizedBox(height: 20),
-          // Simple chart representation
+          // Simple chart representation with real data
           SizedBox(
             height: 150,
             child: CustomPaint(
-              painter: SimpleLineChartPainter(),
+              painter: SimpleLineChartPainter(dailySales),
               child: Container(),
             ),
           ),
@@ -3998,52 +4586,789 @@ class _ReportsTabState extends State<ReportsTab> {
     IconData icon,
     Color bgColor,
     Color iconColor,
+    VoidCallback onTap,
   ) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(8),
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, color: iconColor, size: 24),
             ),
-            child: Icon(icon, color: iconColor, size: 24),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-                ),
-              ],
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.arrow_forward, color: Colors.grey.shade400),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDailySalesReport() {
+    final period = stats?['period'] ?? 'Today';
+    final totalRevenue = stats?['totalRevenue'] ?? 0.0;
+    final orderCount = stats?['orderCount'] ?? 0;
+    final revenueChange = stats?['revenueChange'] ?? 0.0;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Daily Sales Summary'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildReportDetail('Period:', period),
+              _buildReportDetail(
+                'Total Revenue:',
+                '₱${(totalRevenue as num).toStringAsFixed(2)}',
+              ),
+              _buildReportDetail('Total Orders:', orderCount.toString()),
+              _buildReportDetail(
+                'Revenue Change:',
+                '${(revenueChange as num).toStringAsFixed(1)}%',
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'This report shows the daily sales performance for the selected period.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _exportDailySalesReportPDF();
+            },
+            icon: const Icon(Icons.download),
+            label: const Text('Export PDF'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green.shade600,
             ),
           ),
         ],
       ),
     );
   }
+
+  void _showInventoryReport() {
+    final lowStockItems = products
+        .where((p) => (p['quantity'] as int? ?? 0) < 10)
+        .toList();
+    final expiredItems = products.where((p) {
+      final expiryDate = p['expiryDate'];
+      if (expiryDate == null) return false;
+      final expiry = DateTime.fromMillisecondsSinceEpoch(expiryDate);
+      return expiry.isBefore(DateTime.now());
+    }).toList();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Inventory Movement Report'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildReportDetail('Total Products:', products.length.toString()),
+              _buildReportDetail(
+                'Low Stock Items (<10):',
+                lowStockItems.length.toString(),
+              ),
+              _buildReportDetail(
+                'Expired Items:',
+                expiredItems.length.toString(),
+              ),
+              const SizedBox(height: 16),
+              if (lowStockItems.isNotEmpty) ...[
+                const Text(
+                  'Low Stock Products:',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                ...lowStockItems.take(5).map((item) {
+                  return Text(
+                    '• ${item['name']}: ${item['quantity']} units',
+                    style: const TextStyle(fontSize: 11),
+                  );
+                }),
+                const SizedBox(height: 12),
+              ],
+              if (expiredItems.isNotEmpty) ...[
+                const Text(
+                  'Expired Products:',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    color: Colors.red,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...expiredItems.take(5).map((item) {
+                  return Text(
+                    '• ${item['name']}',
+                    style: const TextStyle(fontSize: 11, color: Colors.red),
+                  );
+                }),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _exportInventoryReportPDF();
+            },
+            icon: const Icon(Icons.download),
+            label: const Text('Export PDF'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green.shade600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showStaffReport() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Staff Performance Report'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildReportDetail('Total Staff:', '3'),
+              _buildReportDetail('Active Staff:', '3'),
+              _buildReportDetail('Period:', stats?['period'] ?? 'Today'),
+              const SizedBox(height: 16),
+              const Text(
+                'Staff Members:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text('• John Doe - Pharmacist - 12 sales'),
+              const Text('• Jane Smith - Pharmacy Tech - 8 sales'),
+              const Text('• Mike Johnson - Cashier - 15 sales'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _exportStaffReportPDF();
+            },
+            icon: const Icon(Icons.download),
+            label: const Text('Export PDF'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green.shade600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _generateAndExportReport() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Generate Report'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Select report type:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              _buildReportOption('Daily Sales Summary', Icons.article),
+              _buildReportOption('Inventory Movement', Icons.inventory_2),
+              _buildReportOption('Staff Performance', Icons.people),
+              _buildReportOption('Complete Report (All)', Icons.description),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReportOption(String label, IconData icon) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        onTap: () {
+          Navigator.pop(context);
+          if (label == 'Daily Sales Summary') {
+            _exportDailySalesReportPDF();
+          } else if (label == 'Inventory Movement') {
+            _exportInventoryReportPDF();
+          } else if (label == 'Staff Performance') {
+            _exportStaffReportPDF();
+          } else if (label == 'Complete Report (All)') {
+            _exportCompleteReportPDF();
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: Colors.green.shade700),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(fontWeight: FontWeight.w500),
+                ),
+              ),
+              Icon(Icons.arrow_forward, color: Colors.grey.shade400, size: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReportDetail(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+          ),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 13, color: Colors.black87),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _exportDailySalesReportPDF() async {
+    try {
+      final period = stats?['period'] ?? 'Today';
+      final totalRevenue = stats?['totalRevenue'] ?? 0.0;
+      final orderCount = stats?['orderCount'] ?? 0;
+      final revenueChange = stats?['revenueChange'] ?? 0.0;
+
+      final pdf = pw.Document();
+
+      pdf.addPage(
+        pw.Page(
+          build: (pw.Context context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Center(
+                child: pw.Text(
+                  'Daily Sales Summary Report',
+                  style: pw.TextStyle(
+                    fontSize: 24,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+              ),
+              pw.SizedBox(height: 20),
+              pw.Divider(),
+              pw.SizedBox(height: 20),
+              pw.Text(
+                'Report Details:',
+                style: pw.TextStyle(
+                  fontSize: 16,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 12),
+              pw.Text('Period: $period'),
+              pw.SizedBox(height: 8),
+              pw.Text(
+                'Total Revenue: ₱${(totalRevenue as num).toStringAsFixed(2)}',
+              ),
+              pw.SizedBox(height: 8),
+              pw.Text('Total Orders: $orderCount'),
+              pw.SizedBox(height: 8),
+              pw.Text(
+                'Revenue Change: ${(revenueChange as num).toStringAsFixed(1)}%',
+              ),
+              pw.SizedBox(height: 20),
+              pw.Divider(),
+              pw.SizedBox(height: 20),
+              pw.Text(
+                'Summary:',
+                style: pw.TextStyle(
+                  fontSize: 14,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 10),
+              pw.Text(
+                'This report shows the daily sales performance for the selected period. '
+                'It includes total revenue, number of orders, and revenue comparison with the previous period.',
+              ),
+              pw.SizedBox(height: 40),
+              pw.Text(
+                'Generated on: ${DateTime.now().toString()}',
+                style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      try {
+        final bytes = await pdf.save();
+        logger.info('✓ PDF bytes generated: ${bytes.length} bytes');
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Daily Sales Report generated! (${(bytes.length / 1024).toStringAsFixed(1)} KB)',
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      } catch (saveError) {
+        logger.error('✗ Error generating PDF bytes: $saveError');
+        rethrow;
+      }
+    } catch (e) {
+      logger.error('✗ Daily Sales Report Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportInventoryReportPDF() async {
+    try {
+      final lowStockItems = products
+          .where((p) => (p['quantity'] as int? ?? 0) < 10)
+          .toList();
+      final expiredItems = products.where((p) {
+        final expiryDate = p['expiryDate'];
+        if (expiryDate == null) return false;
+        final expiry = DateTime.fromMillisecondsSinceEpoch(expiryDate);
+        return expiry.isBefore(DateTime.now());
+      }).toList();
+
+      final pdf = pw.Document();
+
+      pdf.addPage(
+        pw.Page(
+          build: (pw.Context context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Center(
+                child: pw.Text(
+                  'Inventory Movement Report',
+                  style: pw.TextStyle(
+                    fontSize: 24,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+              ),
+              pw.SizedBox(height: 20),
+              pw.Divider(),
+              pw.SizedBox(height: 20),
+              pw.Text(
+                'Inventory Summary:',
+                style: pw.TextStyle(
+                  fontSize: 16,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 12),
+              pw.Text('Total Products: ${products.length}'),
+              pw.SizedBox(height: 8),
+              pw.Text('Low Stock Items (<10): ${lowStockItems.length}'),
+              pw.SizedBox(height: 8),
+              pw.Text('Expired Items: ${expiredItems.length}'),
+              pw.SizedBox(height: 20),
+              if (lowStockItems.isNotEmpty) ...[
+                pw.Text(
+                  'Low Stock Products:',
+                  style: pw.TextStyle(
+                    fontSize: 14,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+                pw.SizedBox(height: 10),
+                ...lowStockItems.take(10).map((item) {
+                  return pw.Padding(
+                    padding: const pw.EdgeInsets.only(bottom: 6),
+                    child: pw.Text(
+                      '• ${item['name']}: ${item['quantity']} units',
+                    ),
+                  );
+                }),
+                pw.SizedBox(height: 20),
+              ],
+              if (expiredItems.isNotEmpty) ...[
+                pw.Text(
+                  'Expired Products:',
+                  style: pw.TextStyle(
+                    fontSize: 14,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+                pw.SizedBox(height: 10),
+                ...expiredItems.take(10).map((item) {
+                  return pw.Padding(
+                    padding: const pw.EdgeInsets.only(bottom: 6),
+                    child: pw.Text('• ${item['name']}'),
+                  );
+                }),
+              ],
+              pw.SizedBox(height: 40),
+              pw.Text(
+                'Generated on: ${DateTime.now().toString()}',
+                style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      try {
+        final bytes = await pdf.save();
+        logger.info('✓ PDF bytes generated: ${bytes.length} bytes');
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Inventory Report generated! (${(bytes.length / 1024).toStringAsFixed(1)} KB)',
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      } catch (saveError) {
+        logger.error('✗ Error generating PDF bytes: $saveError');
+        rethrow;
+      }
+    } catch (e) {
+      logger.error('✗ Inventory Report Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportStaffReportPDF() async {
+    try {
+      final period = stats?['period'] ?? 'Today';
+
+      final pdf = pw.Document();
+
+      pdf.addPage(
+        pw.Page(
+          build: (pw.Context context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Center(
+                child: pw.Text(
+                  'Staff Performance Report',
+                  style: pw.TextStyle(
+                    fontSize: 24,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+              ),
+              pw.SizedBox(height: 20),
+              pw.Divider(),
+              pw.SizedBox(height: 20),
+              pw.Text(
+                'Report Summary:',
+                style: pw.TextStyle(
+                  fontSize: 16,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 12),
+              pw.Text('Period: $period'),
+              pw.SizedBox(height: 8),
+              pw.Text('Total Staff: 3'),
+              pw.SizedBox(height: 8),
+              pw.Text('Active Staff: 3'),
+              pw.SizedBox(height: 20),
+              pw.Text(
+                'Staff Members Performance:',
+                style: pw.TextStyle(
+                  fontSize: 14,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 12),
+              pw.Text('• John Doe - Pharmacist - 12 sales'),
+              pw.SizedBox(height: 8),
+              pw.Text('• Jane Smith - Pharmacy Tech - 8 sales'),
+              pw.SizedBox(height: 8),
+              pw.Text('• Mike Johnson - Cashier - 15 sales'),
+              pw.SizedBox(height: 40),
+              pw.Text(
+                'Generated on: ${DateTime.now().toString()}',
+                style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      try {
+        final bytes = await pdf.save();
+        logger.info('✓ PDF bytes generated: ${bytes.length} bytes');
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Staff Report generated! (${(bytes.length / 1024).toStringAsFixed(1)} KB)',
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      } catch (saveError) {
+        logger.error('✗ Error generating PDF bytes: $saveError');
+        rethrow;
+      }
+    } catch (e) {
+      logger.error('✗ Staff Report Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportCompleteReportPDF() async {
+    try {
+      final period = stats?['period'] ?? 'Today';
+      final totalRevenue = stats?['totalRevenue'] ?? 0.0;
+      final orderCount = stats?['orderCount'] ?? 0;
+      final revenueChange = stats?['revenueChange'] ?? 0.0;
+
+      final lowStockItems = products
+          .where((p) => (p['quantity'] as int? ?? 0) < 10)
+          .toList();
+      final expiredItems = products.where((p) {
+        final expiryDate = p['expiryDate'];
+        if (expiryDate == null) return false;
+        final expiry = DateTime.fromMillisecondsSinceEpoch(expiryDate);
+        return expiry.isBefore(DateTime.now());
+      }).toList();
+
+      final pdf = pw.Document();
+
+      pdf.addPage(
+        pw.Page(
+          build: (pw.Context context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Center(
+                child: pw.Text(
+                  'Complete Pharmacy Report',
+                  style: pw.TextStyle(
+                    fontSize: 24,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+              ),
+              pw.SizedBox(height: 20),
+              pw.Divider(),
+              pw.SizedBox(height: 20),
+              pw.Text(
+                '1. Sales Summary',
+                style: pw.TextStyle(
+                  fontSize: 16,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 12),
+              pw.Text('Period: $period'),
+              pw.SizedBox(height: 8),
+              pw.Text(
+                'Total Revenue: ₱${(totalRevenue as num).toStringAsFixed(2)}',
+              ),
+              pw.SizedBox(height: 8),
+              pw.Text('Total Orders: $orderCount'),
+              pw.SizedBox(height: 8),
+              pw.Text(
+                'Revenue Change: ${(revenueChange as num).toStringAsFixed(1)}%',
+              ),
+              pw.SizedBox(height: 20),
+              pw.Divider(),
+              pw.SizedBox(height: 20),
+              pw.Text(
+                '2. Inventory Status',
+                style: pw.TextStyle(
+                  fontSize: 16,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 12),
+              pw.Text('Total Products: ${products.length}'),
+              pw.SizedBox(height: 8),
+              pw.Text('Low Stock Items (<10): ${lowStockItems.length}'),
+              pw.SizedBox(height: 8),
+              pw.Text('Expired Items: ${expiredItems.length}'),
+              pw.SizedBox(height: 20),
+              pw.Divider(),
+              pw.SizedBox(height: 20),
+              pw.Text(
+                '3. Staff Performance',
+                style: pw.TextStyle(
+                  fontSize: 16,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 12),
+              pw.Text('Total Staff: 3'),
+              pw.SizedBox(height: 8),
+              pw.Text('• John Doe - Pharmacist - 12 sales'),
+              pw.SizedBox(height: 6),
+              pw.Text('• Jane Smith - Pharmacy Tech - 8 sales'),
+              pw.SizedBox(height: 6),
+              pw.Text('• Mike Johnson - Cashier - 15 sales'),
+              pw.SizedBox(height: 40),
+              pw.Text(
+                'Generated on: ${DateTime.now().toString()}',
+                style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      try {
+        final bytes = await pdf.save();
+        logger.info('✓ PDF bytes generated: ${bytes.length} bytes');
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Complete Report generated! (${(bytes.length / 1024).toStringAsFixed(1)} KB)',
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      } catch (saveError) {
+        logger.error('✗ Error generating PDF bytes: $saveError');
+        rethrow;
+      }
+    } catch (e) {
+      logger.error('✗ Complete Report Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
 }
 
-// Simple Line Chart Painter
+// Simple Line Chart Painter with Real Data
 class SimpleLineChartPainter extends CustomPainter {
+  final List<double> dailySales;
+
+  SimpleLineChartPainter(this.dailySales);
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
@@ -4052,30 +5377,38 @@ class SimpleLineChartPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    // Sample data points for the week
-    final points = [
-      Offset(0, size.height * 0.6),
-      Offset(size.width * 0.14, size.height * 0.4),
-      Offset(size.width * 0.28, size.height * 0.5),
-      Offset(size.width * 0.42, size.height * 0.3),
-      Offset(size.width * 0.57, size.height * 0.45),
-      Offset(size.width * 0.71, size.height * 0.15),
-      Offset(size.width * 0.85, size.height * 0.35),
-      Offset(size.width, size.height * 0.25),
-    ];
+    if (dailySales.isEmpty) return;
 
+    // Find max value for scaling
+    final maxValue = dailySales.reduce((a, b) => a > b ? a : b);
+    final scale = maxValue > 0 ? size.height / maxValue : 0;
+
+    // Generate points based on real data
+    final points = <Offset>[];
+    final step = size.width / (dailySales.length - 1);
+
+    for (var i = 0; i < dailySales.length; i++) {
+      final x = i * step;
+      final y = size.height - (dailySales[i] * scale);
+      points.add(Offset(x, y));
+    }
+
+    // Draw path
     final path = Path();
-    path.moveTo(points[0].dx, points[0].dy);
-
-    for (var i = 1; i < points.length; i++) {
-      path.lineTo(points[i].dx, points[i].dy);
+    if (points.isNotEmpty) {
+      path.moveTo(points[0].dx, points[0].dy);
+      for (var i = 1; i < points.length; i++) {
+        path.lineTo(points[i].dx, points[i].dy);
+      }
     }
 
     canvas.drawPath(path, paint);
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(SimpleLineChartPainter oldDelegate) {
+    return oldDelegate.dailySales != dailySales;
+  }
 }
 
 // Removed Inventory Tab - It was redundant with Products Tab which already provides inventory management

@@ -9,8 +9,7 @@ class StripeConfig {
   // Secret key (SHOULD ONLY BE USED ON BACKEND)
   // ⚠️ IMPORTANT: Never expose secret key in frontend code in production!
   // This is only for testing. Move to backend for production.
-  static const String secretKey =
-      'YOUR_SECRET_KEY_HERE';
+  static const String secretKey = 'YOUR_SECRET_KEY_HERE';
 
   // Stripe API version
   static const String apiVersion = '2023-10-16';

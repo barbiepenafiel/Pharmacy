@@ -255,10 +255,77 @@ class FirebaseService {
         'userOrders/${user.uid}/$orderId': true,
       };
 
+      // Decrease inventory for each item in the order
+      final dynamic itemsData = orderData['items'];
+      if (itemsData != null) {
+        if (itemsData is List) {
+          // If items is a List
+          for (var item in itemsData) {
+            if (item is Map) {
+              final productId = item['id'];
+              final quantity = item['quantity'] ?? 1;
+              if (productId != null) {
+                // Get current product quantity
+                final productSnapshot = await _database
+                    .child('products/$productId')
+                    .get();
+                if (productSnapshot.exists) {
+                  final product = productSnapshot.value as Map;
+                  final currentQuantity = (product['quantity'] ?? 0) as int;
+                  final newQuantity = (currentQuantity - quantity).clamp(
+                    0,
+                    999999,
+                  );
+                  updates['products/$productId/quantity'] = newQuantity;
+                }
+              }
+            }
+          }
+        } else if (itemsData is Map) {
+          // If items is a Map (Firebase key-value format)
+          itemsData.forEach((productId, item) {
+            if (item is Map) {
+              final quantity = (item['quantity'] ?? 1) as int;
+              // Get current product quantity
+              _database.child('products/$productId').get().then((snapshot) {
+                if (snapshot.exists) {
+                  final product = snapshot.value as Map;
+                  final currentQuantity = (product['quantity'] ?? 0) as int;
+                  final newQuantity = (currentQuantity - quantity).clamp(
+                    0,
+                    999999,
+                  );
+                  updates['products/$productId/quantity'] = newQuantity;
+                }
+              });
+            }
+          });
+        }
+      }
+
       await _database.update(updates);
 
       return orderId;
     } catch (e) {
+      rethrow;
+    }
+  }
+
+  /// Decrease product quantity (called after order)
+  Future<void> decreaseProductQuantity(String productId, int quantity) async {
+    try {
+      final productSnapshot = await _database
+          .child('products/$productId')
+          .get();
+      if (productSnapshot.exists) {
+        final product = productSnapshot.value as Map;
+        final currentQuantity = (product['quantity'] ?? 0) as int;
+        final newQuantity = (currentQuantity - quantity).clamp(0, 999999);
+
+        await _database.child('products/$productId/quantity').set(newQuantity);
+      }
+    } catch (e) {
+      logger.error('Error decreasing product quantity: $e');
       rethrow;
     }
   }

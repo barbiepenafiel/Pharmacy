@@ -788,6 +788,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   const Color(0xFFFFDAB9),
                   'Bandage',
                 ),
+                const SizedBox(width: 12),
+                _buildCategoryItem(
+                  'Vitamins',
+                  Icons.health_and_safety,
+                  const Color(0xFFFFD700),
+                  'Vitamins',
+                ),
               ],
             ),
           ),
@@ -869,9 +876,10 @@ class _HomeScreenState extends State<HomeScreen> {
     Color color,
     String categoryFilter,
   ) {
-    // Map specific category labels to asset images. If no asset is found, show the icon.
+    // Map specific category labels to asset images or URLs. If no asset is found, show the icon.
     final labelKey = label.toLowerCase();
     String? assetPath;
+    String? imageUrl;
     if (labelKey == 'medicine') {
       assetPath = 'assets/images/medicine.jpg';
     } else if (labelKey == 'diabetes') {
@@ -880,6 +888,9 @@ class _HomeScreenState extends State<HomeScreen> {
       assetPath = 'assets/images/SkinCare.jpg';
     } else if (labelKey == 'bandage') {
       assetPath = 'assets/images/Bandage.jpg';
+    } else if (labelKey == 'vitamins') {
+      imageUrl =
+          'https://nyumi.com/cdn/shop/articles/blog_multi.png?v=1685079220';
     }
 
     return GestureDetector(
@@ -901,7 +912,7 @@ class _HomeScreenState extends State<HomeScreen> {
               width: 70,
               height: 70,
               decoration: BoxDecoration(
-                color: assetPath == null
+                color: assetPath == null && imageUrl == null
                     ? color.withAlpha(77)
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(16),
@@ -911,6 +922,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: assetPath != null
                     ? Image.asset(
                         assetPath,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) =>
+                            Icon(icon, color: color.withAlpha(204), size: 35),
+                      )
+                    : imageUrl != null
+                    ? Image.network(
+                        imageUrl,
                         fit: BoxFit.cover,
                         errorBuilder: (context, error, stackTrace) =>
                             Icon(icon, color: color.withAlpha(204), size: 35),
@@ -1693,6 +1711,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   );
                 }),
                 const SizedBox(height: 24),
+                // Developers Section
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Development Team',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildDeveloperCard(
+                        'Barbie T. Penafiel',
+                        'Lead Developer',
+                        'barbiepeafiel2019@gmail.com',
+                      ),
+                      const SizedBox(height: 10),
+                      _buildDeveloperCard(
+                        'Chenybabes Dalougdug',
+                        'UI/UX Designer',
+                        'chenybabes.dalougdug@gmail.com',
+                      ),
+                      const SizedBox(height: 10),
+                      _buildDeveloperCard(
+                        'Laiza Pueblo',
+                        'Database Engineer',
+                        'laiza.pueblo@gmail.com',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
                 if (isLoggedIn)
                   ElevatedButton(
                     onPressed: _handleLogout,
@@ -1749,6 +1803,61 @@ class _ProfileScreenState extends State<ProfileScreen> {
       title: Text(label),
       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
       onTap: onTap,
+    );
+  }
+
+  Widget _buildDeveloperCard(String name, String role, String email) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.teal.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.teal.shade200),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.teal.shade700,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.person, color: Colors.white, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                Text(
+                  role,
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.email, size: 18),
+            onPressed: () {
+              // Could implement email functionality here
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Contact: $email'),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 }

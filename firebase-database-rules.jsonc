@@ -21,10 +21,11 @@
     // Products node - anyone can read, only admins can write (except quantity can be decreased by anyone)
     "products": {
       ".read": true,
+      ".write": "auth != null && newData.child('quantity').exists() && !newData.hasChildren(['name', 'price', 'category'])",
       ".indexOn": ["category", "price", "name", "barcode"],
       "$productId": {
-        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'",
-        ".validate": "newData.hasChildren(['name', 'price', 'category', 'stock'])",
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'admin' || (newData.child('quantity').exists() && !newData.hasChildren(['name', 'price', 'category'])))",
+        ".validate": "newData.hasChildren(['name', 'price', 'category', 'stock']) || newData.child('quantity').exists()",
         "name": {
           ".validate": "newData.isString() && newData.val().length > 0"
         },
@@ -34,9 +35,10 @@
         "stock": {
           ".validate": "newData.isNumber() && newData.val() >= 0"
         },
-        // Allow any authenticated user to update quantity (for order checkout)
+        // Allow any authenticated user to update quantity (for inventory management)
         "quantity": {
           ".write": "auth != null",
+          ".read": true,
           ".validate": "newData.isNumber() && newData.val() >= 0"
         }
       }
@@ -45,6 +47,7 @@
     // Orders node - users can read their own orders, admins can read all
     "orders": {
       ".read": "auth != null",
+      ".write": "auth != null",
       ".indexOn": ["userId", "status", "createdAt"],
       "$orderId": {
         ".read": "auth != null && (data.child('userId').val() === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",

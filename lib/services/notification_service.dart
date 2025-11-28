@@ -1,10 +1,21 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:async';
+import 'logger_service.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
 
   late FlutterLocalNotificationsPlugin _notificationsPlugin;
+  final FirebaseDatabase _database = FirebaseDatabase.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final LoggerService _logger = LoggerService();
+
   int _notificationId = 0;
+  StreamSubscription<DatabaseEvent>? _ordersListener;
+  StreamSubscription<DatabaseEvent>? _productsListener;
+  StreamSubscription<DatabaseEvent>? _offersListener;
 
   NotificationService._internal() {
     _initializeNotifications();
@@ -125,5 +136,127 @@ class NotificationService {
       body: '$medicationName ($dosage) is ready for pickup',
       payload: 'prescription:$medicationName',
     );
+  }
+
+  /// Listen to real-time order updates from Firebase
+  void listenToOrderUpdates() {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return;
+
+      _ordersListener = _database
+          .ref()
+          .child('orders')
+          .orderByChild('userId')
+          .equalTo(user.uid)
+          .onValue
+          .listen((event) {
+            if (!event.snapshot.exists) return;
+
+            final ordersData = event.snapshot.value as Map<dynamic, dynamic>;
+            ordersData.forEach((key, value) {
+              final order = value as Map<dynamic, dynamic>;
+              final orderNumber = order['orderNumber'] ?? key;
+              final status = order['status'] ?? 'unknown';
+              final previousStatus = order['previousStatus'];
+
+              // Only notify if status changed
+              if (previousStatus != null && previousStatus != status) {
+                showOrderNotification(
+                  orderNumber.toString(),
+                  status.toString(),
+                );
+                _logger.info(
+                  'Order update notification: $orderNumber - $status',
+                );
+              }
+            });
+          });
+    } catch (e) {
+      _logger.error('Error listening to order updates: $e');
+    }
+  }
+
+  /// Listen to new product additions from Firebase
+  void listenToNewProducts() {
+    try {
+      _productsListener = _database
+          .ref()
+          .child('products')
+          .orderByChild('createdAt')
+          .onValue
+          .listen((event) {
+            if (!event.snapshot.exists) return;
+
+            final productsData = event.snapshot.value as Map<dynamic, dynamic>;
+            productsData.forEach((key, value) {
+              final product = value as Map<dynamic, dynamic>;
+              final productName = product['name'] ?? 'New Product';
+              final price = product['price'] ?? '0.00';
+              final isNew = product['isNew'] ?? false;
+
+              // Notify about new products
+              if (isNew) {
+                showNewProductNotification(
+                  productName.toString(),
+                  price.toString(),
+                );
+                _logger.info(
+                  'New product notification: $productName - ₱$price',
+                );
+              }
+            });
+          });
+    } catch (e) {
+      _logger.error('Error listening to new products: $e');
+    }
+  }
+
+  /// Listen to special offers from Firebase
+  void listenToOffers() {
+    try {
+      _offersListener = _database
+          .ref()
+          .child('offers')
+          .orderByChild('isActive')
+          .equalTo(true)
+          .onValue
+          .listen((event) {
+            if (!event.snapshot.exists) return;
+
+            final offersData = event.snapshot.value as Map<dynamic, dynamic>;
+            offersData.forEach((key, value) {
+              final offer = value as Map<dynamic, dynamic>;
+              final offerTitle = offer['title'] ?? 'Special Offer';
+              final discount = offer['discount'] ?? '0%';
+
+              showOfferNotification(offerTitle.toString(), discount.toString());
+              _logger.info('Offer notification: $offerTitle - $discount off');
+            });
+          });
+    } catch (e) {
+      _logger.error('Error listening to offers: $e');
+    }
+  }
+
+  /// Start all real-time notification listeners
+  void startListeners() {
+    _logger.info('Starting real-time notification listeners');
+    listenToOrderUpdates();
+    listenToNewProducts();
+    listenToOffers();
+  }
+
+  /// Stop all real-time notification listeners
+  void stopListeners() {
+    _logger.info('Stopping real-time notification listeners');
+    _ordersListener?.cancel();
+    _productsListener?.cancel();
+    _offersListener?.cancel();
+  }
+
+  /// Dispose all resources
+  void dispose() {
+    stopListeners();
   }
 }

@@ -11,21 +11,36 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
   List<Map<String, dynamic>> paymentMethods = [
     {
       'id': 1,
-      'type': 'Credit Card',
+      'type': 'Stripe',
       'card': '**** **** **** 1234',
-      'holder': 'John Doe',
+      'holder': 'Barbie Penafiel',
       'expiry': '12/25',
       'isDefault': true,
       'icon': Icons.credit_card,
+      'provider': 'stripe',
+      'description': 'Fast, secure, and reliable payment processing',
     },
     {
       'id': 2,
-      'type': 'Debit Card',
-      'card': '**** **** **** 5678',
-      'holder': 'John Doe',
-      'expiry': '08/26',
+      'type': 'GCash',
+      'card': '09633444384',
+      'holder': 'Mobile Wallet',
+      'expiry': 'N/A',
       'isDefault': false,
-      'icon': Icons.credit_card,
+      'icon': Icons.phone_in_talk,
+      'provider': 'gcash',
+      'description': 'Philippine mobile payment',
+    },
+    {
+      'id': 3,
+      'type': 'Cash on Delivery',
+      'card': 'Pay upon delivery',
+      'holder': 'Direct Payment',
+      'expiry': 'N/A',
+      'isDefault': false,
+      'icon': Icons.local_shipping,
+      'provider': 'cod',
+      'description': 'Pay when your order arrives',
     },
   ];
 
@@ -49,18 +64,44 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
-                controller: typeController,
-                decoration: const InputDecoration(
-                  hintText: 'Card Type (Credit/Debit)',
-                  border: OutlineInputBorder(),
+              // Type selection
+              if (payment == null)
+                DropdownButtonFormField<String>(
+                  decoration: const InputDecoration(
+                    hintText: 'Select Payment Type',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'Stripe',
+                      child: Text('Stripe (Recommended)'),
+                    ),
+                    DropdownMenuItem(value: 'GCash', child: Text('GCash')),
+                    DropdownMenuItem(
+                      value: 'Cash on Delivery',
+                      child: Text('Cash on Delivery'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      typeController.text = value;
+                    }
+                  },
+                )
+              else
+                TextField(
+                  controller: typeController,
+                  readOnly: true,
+                  decoration: const InputDecoration(
+                    hintText: 'Card Type',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
               const SizedBox(height: 12),
               TextField(
                 controller: cardController,
                 decoration: const InputDecoration(
-                  hintText: 'Card Number',
+                  hintText: 'Card/Account Number',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -76,7 +117,7 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
               TextField(
                 controller: expiryController,
                 decoration: const InputDecoration(
-                  hintText: 'Expiry (MM/YY)',
+                  hintText: 'Expiry (MM/YY) - Optional',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -100,11 +141,12 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
                     'expiry': expiryController.text,
                     'isDefault': false,
                     'icon': Icons.credit_card,
+                    'provider': typeController.text.toLowerCase(),
+                    'description': _getPaymentDescription(typeController.text),
                   });
                 });
               } else {
                 setState(() {
-                  payment['type'] = typeController.text;
                   payment['card'] = cardController.text;
                   payment['holder'] = holderController.text;
                   payment['expiry'] = expiryController.text;
@@ -127,6 +169,19 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
         ],
       ),
     );
+  }
+
+  String _getPaymentDescription(String type) {
+    switch (type.toLowerCase()) {
+      case 'stripe':
+        return 'Fast, secure card payments via Stripe';
+      case 'gcash':
+        return 'Philippines mobile payment';
+      case 'cash on delivery':
+        return 'Pay upon delivery';
+      default:
+        return 'Payment method';
+    }
   }
 
   @override
@@ -176,14 +231,20 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
               itemCount: paymentMethods.length,
               itemBuilder: (context, index) {
                 final payment = paymentMethods[index];
+                final isStripe = payment['provider'] == 'stripe';
+
                 return Container(
                   margin: const EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(
                     gradient: payment['isDefault']
                         ? LinearGradient(
                             colors: [
-                              Colors.teal.shade700,
-                              Colors.teal.shade600,
+                              isStripe
+                                  ? Colors.blue.shade700
+                                  : Colors.teal.shade700,
+                              isStripe
+                                  ? Colors.blue.shade600
+                                  : Colors.teal.shade600,
                             ],
                           )
                         : null,
@@ -198,17 +259,31 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Header with icon and type
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Row(
                               children: [
-                                Icon(
-                                  payment['icon'],
-                                  color: payment['isDefault']
-                                      ? Colors.white
-                                      : Colors.teal.shade700,
-                                  size: 24,
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: payment['isDefault']
+                                        ? Colors.white24
+                                        : (isStripe
+                                              ? Colors.blue.shade100
+                                              : Colors.teal.shade100),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    payment['icon'],
+                                    color: payment['isDefault']
+                                        ? Colors.white
+                                        : (isStripe
+                                              ? Colors.blue.shade700
+                                              : Colors.teal.shade700),
+                                    size: 24,
+                                  ),
                                 ),
                                 const SizedBox(width: 12),
                                 Column(
@@ -232,6 +307,31 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
                                           color: Colors.white70,
                                         ),
                                       ),
+                                    // Stripe badge
+                                    if (isStripe)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Colors.amber.shade600,
+                                            borderRadius: BorderRadius.circular(
+                                              4,
+                                            ),
+                                          ),
+                                          child: const Text(
+                                            'RECOMMENDED',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ],
@@ -243,22 +343,25 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
                                   onTap: () =>
                                       _showPaymentDialog(payment: payment),
                                 ),
-                                PopupMenuItem(
-                                  child: const Text('Delete'),
-                                  onTap: () {
-                                    setState(() {
-                                      paymentMethods.removeAt(index);
-                                    });
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Payment method deleted successfully',
+                                if (payment['provider'] != 'stripe')
+                                  PopupMenuItem(
+                                    child: const Text('Delete'),
+                                    onTap: () {
+                                      setState(() {
+                                        paymentMethods.removeAt(index);
+                                      });
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Payment method deleted successfully',
+                                          ),
+                                          duration: Duration(seconds: 2),
                                         ),
-                                        duration: Duration(seconds: 2),
-                                      ),
-                                    );
-                                  },
-                                ),
+                                      );
+                                    },
+                                  ),
                                 if (!payment['isDefault'])
                                   PopupMenuItem(
                                     child: const Text('Set as Default'),
@@ -286,18 +389,35 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
                           ],
                         ),
                         const SizedBox(height: 16),
+
+                        // Description
                         Text(
-                          payment['card'],
+                          payment['description'] ?? '',
                           style: TextStyle(
-                            fontSize: 16,
-                            letterSpacing: 2,
+                            fontSize: 12,
                             color: payment['isDefault']
-                                ? Colors.white
-                                : Colors.black,
-                            fontWeight: FontWeight.w500,
+                                ? Colors.white70
+                                : Colors.grey.shade600,
                           ),
                         ),
+                        const SizedBox(height: 12),
+
+                        // Card/Account number
+                        if (payment['card'] != null)
+                          Text(
+                            payment['card'],
+                            style: TextStyle(
+                              fontSize: 16,
+                              letterSpacing: 2,
+                              color: payment['isDefault']
+                                  ? Colors.white
+                                  : Colors.black,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
                         const SizedBox(height: 16),
+
+                        // Details row
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -326,33 +446,96 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
                                 ),
                               ],
                             ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Text(
-                                  'EXPIRES',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: payment['isDefault']
-                                        ? Colors.white70
-                                        : Colors.grey.shade600,
+                            if (payment['expiry'] != 'N/A')
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    'EXPIRES',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: payment['isDefault']
+                                          ? Colors.white70
+                                          : Colors.grey.shade600,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  payment['expiry'],
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: payment['isDefault']
-                                        ? Colors.white
-                                        : Colors.black,
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    payment['expiry'],
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: payment['isDefault']
+                                          ? Colors.white
+                                          : Colors.black,
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
+                                ],
+                              )
+                            else
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    'STATUS',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: payment['isDefault']
+                                          ? Colors.white70
+                                          : Colors.grey.shade600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Active',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.green.shade400,
+                                    ),
+                                  ),
+                                ],
+                              ),
                           ],
                         ),
+
+                        // Stripe security info
+                        if (isStripe)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 16),
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: payment['isDefault']
+                                    ? Colors.white10
+                                    : Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.lock_outline,
+                                    size: 16,
+                                    color: payment['isDefault']
+                                        ? Colors.white70
+                                        : Colors.blue.shade700,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'PCI-DSS Level 1 Certified',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: payment['isDefault']
+                                            ? Colors.white70
+                                            : Colors.blue.shade700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),

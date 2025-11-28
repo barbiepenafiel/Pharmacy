@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
@@ -24,7 +25,6 @@ import 'screens/order_tracker_screen.dart';
 import 'services/auth_service.dart';
 import 'services/firebase_service.dart';
 import 'services/cart_service.dart';
-import 'services/notification_service.dart';
 import 'config/stripe_config.dart';
 
 void main() async {
@@ -413,10 +413,160 @@ class _HomeScreenState extends State<HomeScreen> {
   final FirebaseService _firebaseService = FirebaseService();
   final CartService _cartService = CartService();
 
+  // Notifications state
+  final List<Map<String, dynamic>> _notifications = [];
+  StreamSubscription<DatabaseEvent>? _ordersListener;
+  StreamSubscription<DatabaseEvent>? _productsListener;
+  StreamSubscription<DatabaseEvent>? _prescriptionsListener;
+
   @override
   void initState() {
     super.initState();
     _loadNewProducts();
+    _setupNotificationListeners();
+  }
+
+  @override
+  void dispose() {
+    _ordersListener?.cancel();
+    _productsListener?.cancel();
+    _prescriptionsListener?.cancel();
+    super.dispose();
+  }
+
+  void _setupNotificationListeners() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // Listen to new products
+    _productsListener = FirebaseDatabase.instance
+        .ref()
+        .child('products')
+        .onValue
+        .listen((event) {
+          if (!event.snapshot.exists) return;
+          final productsData = event.snapshot.value as Map<dynamic, dynamic>;
+
+          productsData.forEach((key, value) {
+            final product = value as Map<dynamic, dynamic>;
+            if (product['isNew'] == true) {
+              final notification = {
+                'type': 'new_product',
+                'title': '✨ New Product Available',
+                'body':
+                    '${product['name']} just arrived at ₱${product['price']}',
+                'icon': Icons.shopping_bag,
+                'color': Colors.teal,
+                'timestamp':
+                    product['createdAt'] ??
+                    DateTime.now().millisecondsSinceEpoch,
+              };
+
+              if (!_notifications.any(
+                (n) => n['body'] == notification['body'],
+              )) {
+                setState(() {
+                  _notifications.insert(0, notification);
+                  if (_notifications.length > 10) {
+                    _notifications.removeLast();
+                  }
+                });
+              }
+            }
+          });
+        });
+
+    // Listen to user's orders
+    _ordersListener = FirebaseDatabase.instance
+        .ref()
+        .child('orders')
+        .onValue
+        .listen((event) {
+          if (!event.snapshot.exists) return;
+          final ordersData = event.snapshot.value as Map<dynamic, dynamic>;
+
+          ordersData.forEach((key, value) {
+            final order = value as Map<dynamic, dynamic>;
+            if (order['userId'] == user.uid) {
+              final status = order['status'];
+              final orderId = order['id'] ?? key;
+
+              if (status == 'shipped' || status == 'delivered') {
+                String title = '';
+                IconData icon = Icons.local_shipping;
+
+                if (status == 'shipped') {
+                  title = '📦 Order Shipped';
+                } else if (status == 'delivered') {
+                  title = '✅ Order Delivered';
+                  icon = Icons.check_circle;
+                }
+
+                final notification = {
+                  'type': 'order_update',
+                  'title': title,
+                  'body':
+                      'Your order #${orderId.toString().substring(0, 8)} has been $status!',
+                  'icon': icon,
+                  'color': status == 'shipped' ? Colors.blue : Colors.green,
+                  'timestamp':
+                      order['updatedAt'] ??
+                      DateTime.now().millisecondsSinceEpoch,
+                };
+
+                if (!_notifications.any(
+                  (n) => n['body'] == notification['body'],
+                )) {
+                  setState(() {
+                    _notifications.insert(0, notification);
+                    if (_notifications.length > 10) {
+                      _notifications.removeLast();
+                    }
+                  });
+                }
+              }
+            }
+          });
+        });
+
+    // Listen to prescriptions
+    _prescriptionsListener = FirebaseDatabase.instance
+        .ref()
+        .child('prescriptions')
+        .onValue
+        .listen((event) {
+          if (!event.snapshot.exists) return;
+          final prescriptionsData =
+              event.snapshot.value as Map<dynamic, dynamic>;
+
+          prescriptionsData.forEach((key, value) {
+            final prescription = value as Map<dynamic, dynamic>;
+            if (prescription['userId'] == user.uid &&
+                prescription['status'] == 'approved') {
+              final notification = {
+                'type': 'prescription',
+                'title': '💊 Prescription Approved',
+                'body': 'Your prescription is ready for pickup!',
+                'icon': Icons.medical_services,
+                'color': Colors.purple,
+                'timestamp':
+                    prescription['approvedAt'] ??
+                    DateTime.now().millisecondsSinceEpoch,
+              };
+
+              if (!_notifications.any(
+                (n) => n['body'] == notification['body'],
+              )) {
+                setState(() {
+                  _notifications.insert(0, notification);
+                  if (_notifications.length > 10) {
+                    _notifications.removeLast();
+                  }
+                });
+              }
+            }
+          });
+        });
   }
 
   Future<void> _loadNewProducts() async {
@@ -451,43 +601,51 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 45,
-                        height: 45,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.grey.shade200,
-                          image: const DecorationImage(
-                            image: AssetImage('assets/images/Logo.png'),
-                            fit: BoxFit.cover,
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 45,
+                          height: 45,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.grey.shade200,
+                            image: const DecorationImage(
+                              image: AssetImage('assets/images/Logo.png'),
+                              fit: BoxFit.cover,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Hi, $userName',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black87,
-                            ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Hi, $userName! 👋',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black87,
+                                  letterSpacing: 0.3,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Your health matters to us',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade600,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'How can we help you today?',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                        ),
+                      ],
+                    ),
                   ),
                   Row(
                     children: [
@@ -663,7 +821,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(height: 12),
                         ElevatedButton(
-                          onPressed: () {},
+                          onPressed: () {
+                            // Navigate to products store
+                            widget.onNavigateToStore();
+                          },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF006B6B),
                             foregroundColor: Colors.white,
@@ -808,13 +969,39 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'New Products',
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'New Products',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      width: 40,
+                      height: 3,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Colors.teal.shade400, Colors.teal.shade700],
+                        ),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Latest additions to our collection',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade600,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
                 ),
                 TextButton(
                   onPressed: widget.onNavigateToStore,
@@ -1045,80 +1232,87 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showNotificationsPanel(BuildContext context) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       builder: (context) => Container(
         color: Colors.white,
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Notifications',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Divider(color: Colors.grey.shade300),
+            if (_notifications.isEmpty)
               Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Notifications',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.notifications_none,
+                        size: 48,
+                        color: Colors.grey.shade300,
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ],
-                ),
-              ),
-              Divider(color: Colors.grey.shade300),
-              _buildNotificationItem(
-                'New Product Available',
-                'Vitamin D3 just arrived at ₱199.99',
-                Icons.shopping_bag,
-                Colors.teal,
-              ),
-              _buildNotificationItem(
-                'Order Shipped',
-                'Your order #12345 has been shipped!',
-                Icons.local_shipping,
-                Colors.blue,
-              ),
-              _buildNotificationItem(
-                'Special Offer',
-                'Get 20% off on Pain Relief Medications',
-                Icons.local_offer,
-                Colors.orange,
-              ),
-              _buildNotificationItem(
-                'Prescription Ready',
-                'Your prescription for Amoxicillin is ready for pickup',
-                Icons.medical_services,
-                Colors.red,
-              ),
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    NotificationService().showNewProductNotification(
-                      'Premium Multivitamin',
-                      '₱299.99',
-                    );
-                  },
-                  icon: Icon(Icons.notifications, color: Colors.white),
-                  label: const Text('Send Test Notification'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.teal.shade700,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(double.infinity, 48),
+                      const SizedBox(height: 12),
+                      Text(
+                        'No notifications yet',
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _notifications.length,
+                  itemBuilder: (context, index) {
+                    final notification = _notifications[index];
+                    return _buildNotificationItem(
+                      notification['title'] ?? 'Notification',
+                      notification['body'] ?? '',
+                      notification['icon'] ?? Icons.notifications,
+                      notification['color'] ?? Colors.grey,
+                    );
+                  },
+                ),
               ),
-              const SizedBox(height: 16),
-            ],
-          ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                },
+                icon: Icon(Icons.notifications, color: Colors.white),
+                label: const Text('Mark all as read'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal.shade700,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 48),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
         ),
       ),
     );
@@ -1729,19 +1923,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       _buildDeveloperCard(
                         'Barbie T. Penafiel',
                         'Lead Developer',
-                        'barbiepeafiel2019@gmail.com',
+                        'barbiepenafiel2019@gmail.com',
+                        imagePath: 'assets/images/profi.png',
                       ),
                       const SizedBox(height: 10),
                       _buildDeveloperCard(
                         'Chenybabes Dalougdug',
                         'UI/UX Designer',
-                        'chenybabes.dalougdug@gmail.com',
+                        'chenybabes.dalogdug@gmail.com',
+                        imagePath: 'assets/images/cheni.jpg',
                       ),
                       const SizedBox(height: 10),
                       _buildDeveloperCard(
                         'Laiza Pueblo',
                         'Database Engineer',
                         'laiza.pueblo@gmail.com',
+                        imagePath: 'assets/images/lai.jpg',
                       ),
                     ],
                   ),
@@ -1806,7 +2003,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildDeveloperCard(String name, String role, String email) {
+  Widget _buildDeveloperCard(
+    String name,
+    String role,
+    String email, {
+    String? imagePath,
+  }) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1822,8 +2024,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
             decoration: BoxDecoration(
               color: Colors.teal.shade700,
               shape: BoxShape.circle,
+              image: imagePath != null
+                  ? DecorationImage(
+                      image: AssetImage(imagePath),
+                      fit: BoxFit.cover,
+                    )
+                  : null,
             ),
-            child: Icon(Icons.person, color: Colors.white, size: 20),
+            child: imagePath == null
+                ? const Icon(Icons.person, color: Colors.white, size: 20)
+                : null,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -2006,14 +2216,39 @@ class _TrackerScreenState extends State<TrackerScreen> {
   }
 
   String _getOrderItemsSummary(dynamic items) {
-    if (items == null || items is! List || items.isEmpty) return 'No items';
-    final itemsList = items;
-    if (itemsList.length == 1) {
-      return itemsList[0]['name'] ?? 'Item';
-    } else if (itemsList.length == 2) {
-      return '${itemsList[0]['name']}, ${itemsList[1]['name']}';
-    } else {
-      return '${itemsList[0]['name']} and ${itemsList.length - 1} more';
+    if (items == null) return 'No items';
+
+    try {
+      final itemsList = <String>[];
+
+      // Handle Map format
+      if (items is Map) {
+        items.forEach((key, item) {
+          if (item is Map) {
+            final name =
+                item['name'] ?? item['productName'] ?? 'Unknown Product';
+            final qty = item['quantity'] ?? 1;
+            itemsList.add('$name (x$qty)');
+          }
+        });
+      }
+      // Handle List format
+      else if (items is List) {
+        for (var item in items) {
+          if (item is Map) {
+            final name =
+                item['name'] ?? item['productName'] ?? 'Unknown Product';
+            final qty = item['quantity'] ?? 1;
+            itemsList.add('$name (x$qty)');
+          }
+        }
+      }
+
+      if (itemsList.isEmpty) return 'No items';
+      return itemsList.join(', ');
+    } catch (e) {
+      logger.error('Error formatting items: $e');
+      return 'Multiple items';
     }
   }
 
@@ -2039,9 +2274,46 @@ class _TrackerScreenState extends State<TrackerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Order Tracker'),
         backgroundColor: Colors.teal.shade700,
         elevation: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.receipt_long, color: Colors.white, size: 26),
+                const SizedBox(width: 10),
+                Text(
+                  'Order Tracker',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    letterSpacing: 0.4,
+                    shadows: [
+                      Shadow(
+                        offset: const Offset(0, 2),
+                        blurRadius: 4,
+                        color: Colors.black.withAlpha(77),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Track all your orders',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: Colors.cyan[100],
+                letterSpacing: 0.2,
+              ),
+            ),
+          ],
+        ),
       ),
       body: loading
           ? const Center(child: CircularProgressIndicator())
@@ -2108,14 +2380,18 @@ class _TrackerScreenState extends State<TrackerScreen> {
                 return Container(
                   margin: const EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade200),
+                    gradient: LinearGradient(
+                      colors: [Colors.teal.shade50, Colors.cyan.shade50],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.teal.shade200, width: 1.5),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.05),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
+                        color: Colors.teal.shade200.withAlpha(77),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
                       ),
                     ],
                   ),
@@ -2135,7 +2411,7 @@ class _TrackerScreenState extends State<TrackerScreen> {
                         ),
                       );
                     },
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(16),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
                       child: Column(
@@ -2147,9 +2423,11 @@ class _TrackerScreenState extends State<TrackerScreen> {
                             children: [
                               Text(
                                 'Order #${order['id']?.toString().substring(0, 8) ?? 'N/A'}',
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 16,
+                                  fontSize: 18,
+                                  color: Colors.teal.shade900,
+                                  letterSpacing: 0.2,
                                 ),
                               ),
                               Container(
@@ -2192,15 +2470,16 @@ class _TrackerScreenState extends State<TrackerScreen> {
                             children: [
                               Icon(
                                 Icons.calendar_today,
-                                size: 14,
-                                color: Colors.grey.shade600,
+                                size: 16,
+                                color: Colors.teal.shade600,
                               ),
-                              const SizedBox(width: 6),
+                              const SizedBox(width: 8),
                               Text(
                                 _formatDate(order['createdAt']),
                                 style: TextStyle(
-                                  color: Colors.grey.shade600,
-                                  fontSize: 13,
+                                  color: Colors.teal.shade700,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
                             ],
@@ -2211,16 +2490,17 @@ class _TrackerScreenState extends State<TrackerScreen> {
                             children: [
                               Icon(
                                 Icons.shopping_bag,
-                                size: 14,
-                                color: Colors.grey.shade600,
+                                size: 16,
+                                color: Colors.teal.shade600,
                               ),
-                              const SizedBox(width: 6),
+                              const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
                                   _getOrderItemsSummary(order['items']),
                                   style: TextStyle(
-                                    color: Colors.grey.shade600,
-                                    fontSize: 13,
+                                    color: Colors.teal.shade700,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -2229,17 +2509,34 @@ class _TrackerScreenState extends State<TrackerScreen> {
                             ],
                           ),
                           const SizedBox(height: 12),
+                          const Divider(thickness: 1, height: 1),
+                          const SizedBox(height: 12),
                           // Total and Track Button
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(
-                                '₱${order['total']?.toStringAsFixed(2) ?? '0.00'}',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 18,
-                                  color: Colors.teal.shade700,
-                                ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Total Amount',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade600,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '₱${order['total']?.toStringAsFixed(2) ?? '0.00'}',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.teal.shade700,
+                                      letterSpacing: 0.2,
+                                    ),
+                                  ),
+                                ],
                               ),
                               ElevatedButton.icon(
                                 onPressed: () {

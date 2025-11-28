@@ -423,4 +423,105 @@ class AuthService {
       return (success: false, message: 'Error: ${e.toString()}');
     }
   }
+
+  /// Change user password
+  Future<({bool success, String message})> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) {
+      return (success: false, message: 'No user logged in');
+    }
+
+    try {
+      // Validate new password
+      if (newPassword.length < 6) {
+        return (
+          success: false,
+          message: 'New password must be at least 6 characters',
+        );
+      }
+
+      // Reauthenticate with current password
+      final credential = EmailAuthProvider.credential(
+        email: user.email!,
+        password: currentPassword,
+      );
+      await user.reauthenticateWithCredential(credential);
+
+      // Update password
+      await user.updatePassword(newPassword);
+
+      return (success: true, message: 'Password changed successfully');
+    } on FirebaseAuthException catch (e) {
+      String message;
+      switch (e.code) {
+        case 'wrong-password':
+          message = 'Current password is incorrect';
+          break;
+        case 'weak-password':
+          message = 'New password is too weak. Use a stronger password';
+          break;
+        case 'requires-recent-login':
+          message = 'Please login again before changing password';
+          break;
+        default:
+          message = 'Password change failed: ${e.message}';
+      }
+      return (success: false, message: message);
+    } catch (e) {
+      return (success: false, message: 'Error: ${e.toString()}');
+    }
+  }
+
+  /// Save user preferences (language, theme, etc)
+  Future<({bool success, String message})> savePreferences({
+    required String language,
+    required String theme,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      return (success: false, message: 'No user logged in');
+    }
+
+    try {
+      await _database
+          .ref()
+          .child('users')
+          .child(user.uid)
+          .child('preferences')
+          .update({
+            'language': language,
+            'theme': theme,
+            'updatedAt': ServerValue.timestamp,
+          });
+
+      return (success: true, message: 'Preferences saved successfully');
+    } catch (e) {
+      return (success: false, message: 'Error saving preferences: $e');
+    }
+  }
+
+  /// Get user preferences
+  Future<Map<String, dynamic>?> getPreferences() async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+
+    try {
+      final snapshot = await _database
+          .ref()
+          .child('users')
+          .child(user.uid)
+          .child('preferences')
+          .get();
+
+      if (snapshot.exists) {
+        return Map<String, dynamic>.from(snapshot.value as Map);
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
 }

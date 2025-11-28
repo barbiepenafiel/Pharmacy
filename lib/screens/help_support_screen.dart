@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../services/contact_service.dart';
+import '../config/contact_config.dart';
 
 class HelpSupportScreen extends StatelessWidget {
   const HelpSupportScreen({super.key});
@@ -68,14 +70,15 @@ class HelpSupportScreen extends StatelessWidget {
                     context,
                     icon: Icons.phone,
                     title: 'Call Us',
-                    subtitle: '+1 (555) 123-4567',
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Opening phone dialer...'),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
+                    subtitle: ContactConfig.supportPhoneNumber,
+                    onTap: () async {
+                      final success = await ContactService.callSupport();
+                      if (!success && context.mounted) {
+                        ContactService.showError(
+                          context,
+                          'Could not open phone dialer. Please try again.',
+                        );
+                      }
                     },
                   ),
                   const SizedBox(height: 12),
@@ -83,14 +86,15 @@ class HelpSupportScreen extends StatelessWidget {
                     context,
                     icon: Icons.email,
                     title: 'Email Us',
-                    subtitle: 'support@pharmacyapp.com',
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Opening email client...'),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
+                    subtitle: ContactConfig.supportEmail,
+                    onTap: () async {
+                      final success = await ContactService.emailSupport();
+                      if (!success && context.mounted) {
+                        ContactService.showError(
+                          context,
+                          'Could not open email client. Please try again.',
+                        );
+                      }
                     },
                   ),
                   const SizedBox(height: 12),
@@ -99,13 +103,14 @@ class HelpSupportScreen extends StatelessWidget {
                     icon: Icons.chat,
                     title: 'Live Chat',
                     subtitle: 'Chat with our support team',
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Opening live chat...'),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
+                    onTap: () async {
+                      final success = await ContactService.openLiveChat();
+                      if (!success && context.mounted) {
+                        ContactService.showError(
+                          context,
+                          'Could not open live chat. Please try again.',
+                        );
+                      }
                     },
                   ),
                 ],

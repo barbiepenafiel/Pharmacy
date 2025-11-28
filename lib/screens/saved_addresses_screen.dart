@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/firebase_service.dart';
+import 'address_map_view_screen.dart';
 
 class SavedAddressesScreen extends StatefulWidget {
   const SavedAddressesScreen({super.key});
@@ -232,6 +233,15 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
     );
   }
 
+  void _showAddressOnMap(Map<String, dynamic> address) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AddressMapViewScreen(address: address),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -439,6 +449,18 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                             color: Colors.grey.shade600,
                             fontSize: 13,
                           ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => _showAddressOnMap(address),
+                                icon: const Icon(Icons.map),
+                                label: const Text('View on Map'),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

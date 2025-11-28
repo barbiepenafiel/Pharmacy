@@ -3674,47 +3674,61 @@ class _InventoryTabState extends State<InventoryTab> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 8,
-                                  ),
-                                  child: Text(expiryText),
-                                ),
+                        GestureDetector(
+                          onTap: () async {
+                            final pickedDate = await showDatePicker(
+                              context: context,
+                              initialDate:
+                                  selectedExpiryDate ??
+                                  DateTime.now().add(const Duration(days: 365)),
+                              firstDate: DateTime.now(),
+                              lastDate: DateTime.now().add(
+                                const Duration(days: 3650),
                               ),
-                              TextButton.icon(
-                                onPressed: () async {
-                                  final pickedDate = await showDatePicker(
-                                    context: context,
-                                    initialDate:
-                                        selectedExpiryDate ??
-                                        DateTime.now().add(
-                                          const Duration(days: 365),
-                                        ),
-                                    firstDate: DateTime.now(),
-                                    lastDate: DateTime.now().add(
-                                      const Duration(days: 3650),
+                            );
+                            if (pickedDate != null) {
+                              setExpiryState(() {
+                                selectedExpiryDate = pickedDate;
+                              });
+                              setDialogState(() {});
+                            }
+                          },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey.shade300),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 12,
                                     ),
-                                  );
-                                  if (pickedDate != null) {
-                                    setExpiryState(() {
-                                      selectedExpiryDate = pickedDate;
-                                    });
-                                    setDialogState(() {});
-                                  }
-                                },
-                                icon: const Icon(Icons.calendar_today),
-                                label: const Text('Pick Date'),
-                              ),
-                            ],
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.calendar_today,
+                                          color: Colors.teal.shade700,
+                                          size: 18,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          expiryText,
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color: selectedExpiryDate == null
+                                                ? Colors.grey.shade600
+                                                : Colors.black,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ],
@@ -4064,20 +4078,64 @@ class _InventoryTabState extends State<InventoryTab> {
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                       const SizedBox(height: 4),
-                                      // Expiry Date
-                                      Text(
-                                        'Expires: $expiryText',
-                                        style: TextStyle(
-                                          color: isExpired
-                                              ? Colors.red.shade600
-                                              : Colors.grey.shade600,
-                                          fontSize: 12,
-                                          fontWeight: isExpired
-                                              ? FontWeight.w600
-                                              : FontWeight.normal,
+                                      // Expiry Date - Clickable to edit if expired
+                                      GestureDetector(
+                                        onTap: isExpired
+                                            ? () => _editProduct(product)
+                                            : null,
+                                        child: Container(
+                                          padding: isExpired
+                                              ? const EdgeInsets.symmetric(
+                                                  horizontal: 6,
+                                                  vertical: 2,
+                                                )
+                                              : EdgeInsets.zero,
+                                          decoration: isExpired
+                                              ? BoxDecoration(
+                                                  color: Colors.red.shade50,
+                                                  border: Border.all(
+                                                    color: Colors.red.shade300,
+                                                    width: 1,
+                                                  ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(4),
+                                                )
+                                              : null,
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.max,
+                                            children: [
+                                              Expanded(
+                                                child: Text(
+                                                  'Expires: $expiryText',
+                                                  style: TextStyle(
+                                                    color: isExpired
+                                                        ? Colors.red.shade600
+                                                        : Colors.grey.shade600,
+                                                    fontSize: 12,
+                                                    fontWeight: isExpired
+                                                        ? FontWeight.w600
+                                                        : FontWeight.normal,
+                                                  ),
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              if (isExpired)
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        left: 4,
+                                                      ),
+                                                  child: Icon(
+                                                    Icons.edit,
+                                                    size: 12,
+                                                    color: Colors.red.shade600,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
                                         ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ],
                                   ),

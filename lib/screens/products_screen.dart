@@ -163,17 +163,48 @@ class _ProductsScreenState extends State<ProductsScreen> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.teal.shade700,
-        title: Text(
-          widget.categoryFilter != null && widget.categoryFilter!.isNotEmpty
-              ? '${widget.categoryFilter} Products'
-              : 'Products',
-        ),
         elevation: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              widget.categoryFilter != null && widget.categoryFilter!.isNotEmpty
+                  ? '${widget.categoryFilter} Products'
+                  : '🏥 Our Products',
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.3,
+                color: Colors.white,
+                shadows: [
+                  Shadow(
+                    offset: Offset(0, 2),
+                    blurRadius: 4,
+                    color: Color.fromARGB(80, 0, 0, 0),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              widget.categoryFilter != null && widget.categoryFilter!.isNotEmpty
+                  ? 'Browse our ${widget.categoryFilter!.toLowerCase()} collection'
+                  : 'Quality medicine & health products',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Color.fromARGB(255, 230, 255, 255),
+                letterSpacing: 0.2,
+              ),
+            ),
+          ],
+        ),
         actions: [
           Stack(
             children: [
               IconButton(
-                icon: const Icon(Icons.shopping_cart),
+                icon: Icon(Icons.shopping_cart, color: Colors.white, size: 26),
                 onPressed: () {
                   Navigator.push(
                     context,
@@ -254,18 +285,105 @@ class _ProductsScreenState extends State<ProductsScreen> {
             )
           : Column(
               children: [
+                // Categories Section
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Browse Categories',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.teal.shade900,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 95,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            _buildCategoryButton(
+                              'Medicine',
+                              Icons.medication,
+                              'Medicine',
+                            ),
+                            const SizedBox(width: 10),
+                            _buildCategoryButton(
+                              'Diabetes',
+                              Icons.devices,
+                              'Diabetes',
+                            ),
+                            const SizedBox(width: 10),
+                            _buildCategoryButton(
+                              'Skin Care',
+                              Icons.spa_outlined,
+                              'Skin Care',
+                            ),
+                            const SizedBox(width: 10),
+                            _buildCategoryButton(
+                              'Bandage',
+                              Icons.healing,
+                              'Bandage',
+                            ),
+                            const SizedBox(width: 10),
+                            _buildCategoryButton(
+                              'Vitamins',
+                              Icons.health_and_safety,
+                              'Vitamins',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
                 Padding(
                   padding: const EdgeInsets.all(16),
                   child: TextField(
                     onChanged: (value) => setState(() => searchQuery = value),
                     decoration: InputDecoration(
-                      hintText: 'Search products...',
-                      prefixIcon: const Icon(Icons.search),
+                      hintText: '🔍 Search products...',
+                      hintStyle: TextStyle(
+                        color: Colors.grey.shade500,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      prefixIcon: Icon(
+                        Icons.search,
+                        color: Colors.teal.shade700,
+                      ),
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: Colors.teal.shade200,
+                          width: 1,
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: Colors.teal.shade200,
+                          width: 1,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: Colors.teal.shade700,
+                          width: 2,
+                        ),
                       ),
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
+                        vertical: 12,
                       ),
                     ),
                   ),
@@ -279,14 +397,15 @@ class _ProductsScreenState extends State<ProductsScreen> {
                               Icon(
                                 Icons.shopping_bag_outlined,
                                 size: 64,
-                                color: Colors.grey.shade300,
+                                color: Colors.teal.shade200,
                               ),
                               const SizedBox(height: 16),
                               Text(
                                 'No products found',
                                 style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.grey.shade600,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.teal.shade700,
                                 ),
                               ),
                             ],
@@ -364,9 +483,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                         children: [
                                           Text(
                                             product['name'] ?? 'Product',
-                                            style: const TextStyle(
-                                              fontSize: 12,
+                                            style: TextStyle(
+                                              fontSize: 13,
                                               fontWeight: FontWeight.bold,
+                                              color: Colors.teal.shade900,
                                             ),
                                             maxLines: 2,
                                             overflow: TextOverflow.ellipsis,
@@ -375,8 +495,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                           Text(
                                             product['dosage'] ?? '',
                                             style: TextStyle(
-                                              fontSize: 10,
-                                              color: Colors.grey.shade600,
+                                              fontSize: 11,
+                                              color: Colors.teal.shade600,
+                                              fontWeight: FontWeight.w500,
                                             ),
                                           ),
                                           const SizedBox(height: 8),
@@ -387,9 +508,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                               Text(
                                                 '₱${product['price']?.toStringAsFixed(2) ?? '0.00'}',
                                                 style: TextStyle(
-                                                  fontSize: 14,
+                                                  fontSize: 15,
                                                   fontWeight: FontWeight.bold,
                                                   color: Colors.teal.shade700,
+                                                  letterSpacing: 0.2,
                                                 ),
                                               ),
                                               InkWell(
@@ -400,10 +522,15 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                                     6,
                                                   ),
                                                   decoration: BoxDecoration(
-                                                    color: Colors.teal.shade700,
+                                                    gradient: LinearGradient(
+                                                      colors: [
+                                                        Colors.teal.shade600,
+                                                        Colors.teal.shade800,
+                                                      ],
+                                                    ),
                                                     borderRadius:
                                                         BorderRadius.circular(
-                                                          4,
+                                                          6,
                                                         ),
                                                   ),
                                                   child: const Icon(
@@ -643,6 +770,109 @@ class _ProductsScreenState extends State<ProductsScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildCategoryButton(
+    String label,
+    IconData icon,
+    String categoryFilter,
+  ) {
+    // Map category labels to asset images or URLs
+    final labelKey = label.toLowerCase();
+    String? assetPath;
+    String? imageUrl;
+
+    if (labelKey == 'medicine') {
+      assetPath = 'assets/images/medicine.jpg';
+    } else if (labelKey == 'diabetes') {
+      assetPath = 'assets/images/Diabetes.jpg';
+    } else if (labelKey == 'skin care' || labelKey == 'skincare') {
+      assetPath = 'assets/images/SkinCare.jpg';
+    } else if (labelKey == 'bandage') {
+      assetPath = 'assets/images/Bandage.jpg';
+    } else if (labelKey == 'vitamins') {
+      imageUrl =
+          'https://nyumi.com/cdn/shop/articles/blog_multi.png?v=1685079220';
+    }
+
+    return GestureDetector(
+      onTap: () {
+        // Navigate to products screen with category filter
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                ProductsScreen(categoryFilter: categoryFilter),
+          ),
+        );
+      },
+      child: Column(
+        children: [
+          Container(
+            width: 70,
+            height: 70,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.teal.shade300.withAlpha(102),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: assetPath != null
+                  ? Image.asset(
+                      assetPath,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return _buildIconFallback(icon);
+                      },
+                    )
+                  : imageUrl != null
+                  ? Image.network(
+                      imageUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return _buildIconFallback(icon);
+                      },
+                    )
+                  : _buildIconFallback(icon),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: 70,
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Colors.teal.shade900,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIconFallback(IconData icon) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.teal.shade400, Colors.teal.shade700],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Icon(icon, color: Colors.white, size: 32),
     );
   }
 }

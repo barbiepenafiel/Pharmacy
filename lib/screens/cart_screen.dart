@@ -445,7 +445,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           .map(
             (item) => {
               'productId': item.id,
-              'productName': item.name,
+              'name': item.name,
               'price': item.price,
               'quantity': item.quantity,
               'subtotal': item.price * item.quantity,
@@ -476,6 +476,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         'userName': userName,
         'userEmail': userEmail,
       });
+
+      // Decrease inventory immediately after order is created
+      await firebaseService.decreaseInventoryForOrder(orderItems);
 
       // Handle different payment methods
       if (_selectedPaymentMethod == 'stripe') {

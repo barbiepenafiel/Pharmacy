@@ -5,7 +5,6 @@ import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
 // ignore: unused_import
 import '../services/logger_service.dart';
-import 'admin_prescriptions_tab.dart';
 import 'order_tracker_screen.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -176,10 +175,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 label: Text('Orders'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.medical_information),
-                label: Text('Prescriptions'),
-              ),
-              NavigationRailDestination(
                 icon: Icon(Icons.inventory_2),
                 label: Text('Inventory'),
               ),
@@ -207,10 +202,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       case 3:
         return const OrdersTab();
       case 4:
-        return const PrescriptionsTab();
-      case 5:
         return const InventoryTab();
-      case 6:
+      case 5:
         return const ReportsTab();
       default:
         return const DashboardTab();

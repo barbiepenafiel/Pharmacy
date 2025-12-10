@@ -13,7 +13,6 @@ import 'services/logger_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/my_orders_screen.dart';
-import 'screens/prescriptions_screen.dart';
 import 'screens/saved_addresses_screen.dart';
 import 'screens/payment_methods_screen.dart';
 import 'screens/settings_screen.dart';
@@ -417,7 +416,6 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<Map<String, dynamic>> _notifications = [];
   StreamSubscription<DatabaseEvent>? _ordersListener;
   StreamSubscription<DatabaseEvent>? _productsListener;
-  StreamSubscription<DatabaseEvent>? _prescriptionsListener;
 
   @override
   void initState() {
@@ -430,7 +428,6 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _ordersListener?.cancel();
     _productsListener?.cancel();
-    _prescriptionsListener?.cancel();
     super.dispose();
   }
 
@@ -524,45 +521,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     }
                   });
                 }
-              }
-            }
-          });
-        });
-
-    // Listen to prescriptions
-    _prescriptionsListener = FirebaseDatabase.instance
-        .ref()
-        .child('prescriptions')
-        .onValue
-        .listen((event) {
-          if (!event.snapshot.exists) return;
-          final prescriptionsData =
-              event.snapshot.value as Map<dynamic, dynamic>;
-
-          prescriptionsData.forEach((key, value) {
-            final prescription = value as Map<dynamic, dynamic>;
-            if (prescription['userId'] == user.uid &&
-                prescription['status'] == 'approved') {
-              final notification = {
-                'type': 'prescription',
-                'title': '💊 Prescription Approved',
-                'body': 'Your prescription is ready for pickup!',
-                'icon': Icons.medical_services,
-                'color': Colors.purple,
-                'timestamp':
-                    prescription['approvedAt'] ??
-                    DateTime.now().millisecondsSinceEpoch,
-              };
-
-              if (!_notifications.any(
-                (n) => n['body'] == notification['body'],
-              )) {
-                setState(() {
-                  _notifications.insert(0, notification);
-                  if (_notifications.length > 10) {
-                    _notifications.removeLast();
-                  }
-                });
               }
             }
           });
@@ -1869,13 +1827,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 _buildProfileMenuItem('My Orders', Icons.shopping_bag, () {
                   Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const MyOrdersScreen()),
-                  );
-                }),
-                _buildProfileMenuItem('Prescriptions', Icons.description, () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const PrescriptionsScreen(),
-                    ),
                   );
                 }),
                 _buildProfileMenuItem('Saved Addresses', Icons.location_on, () {

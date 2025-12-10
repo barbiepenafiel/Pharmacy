@@ -1384,9 +1384,9 @@ class _ProductsTabState extends State<ProductsTab> {
                   padding: const EdgeInsets.all(16),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 3,
-                    childAspectRatio: 0.85,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
+                    childAspectRatio: 0.65,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
                   ),
                   itemCount: filteredProducts.length,
                   itemBuilder: (context, index) {
@@ -1400,7 +1400,7 @@ class _ProductsTabState extends State<ProductsTab> {
                           children: [
                             // Product Image - Fixed height
                             Container(
-                              height: 80,
+                              height: 60,
                               width: double.infinity,
                               decoration: BoxDecoration(
                                 color: Colors.grey.shade100,
@@ -1419,7 +1419,7 @@ class _ProductsTabState extends State<ProductsTab> {
                                               Center(
                                                 child: Icon(
                                                   Icons.broken_image,
-                                                  size: 36,
+                                                  size: 28,
                                                   color: Colors.grey.shade400,
                                                 ),
                                               ),
@@ -1427,7 +1427,7 @@ class _ProductsTabState extends State<ProductsTab> {
                                   : Center(
                                       child: Icon(
                                         Icons.image_not_supported,
-                                        size: 36,
+                                        size: 28,
                                         color: Colors.grey.shade400,
                                       ),
                                     ),
@@ -1435,7 +1435,10 @@ class _ProductsTabState extends State<ProductsTab> {
                             // Product Info - Takes remaining space
                             Expanded(
                               child: Padding(
-                                padding: const EdgeInsets.all(3),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 2,
+                                  vertical: 1,
+                                ),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   mainAxisSize: MainAxisSize.min,
@@ -1446,7 +1449,7 @@ class _ProductsTabState extends State<ProductsTab> {
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
                                         fontWeight: FontWeight.bold,
-                                        fontSize: 9,
+                                        fontSize: 7,
                                         height: 1.0,
                                       ),
                                     ),
@@ -1455,17 +1458,17 @@ class _ProductsTabState extends State<ProductsTab> {
                                       style: TextStyle(
                                         color: Colors.teal.shade700,
                                         fontWeight: FontWeight.bold,
-                                        fontSize: 8,
+                                        fontSize: 6,
                                       ),
                                     ),
-                                    const Spacer(),
+                                    const SizedBox(height: 1),
                                     // Buttons at bottom
                                     Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Expanded(
                                           child: SizedBox(
-                                            height: 16,
+                                            height: 12,
                                             child: ElevatedButton(
                                               onPressed: () => _showProductForm(
                                                 product: product,
@@ -1473,24 +1476,24 @@ class _ProductsTabState extends State<ProductsTab> {
                                               style: ElevatedButton.styleFrom(
                                                 padding:
                                                     const EdgeInsets.symmetric(
-                                                      horizontal: 2,
+                                                      horizontal: 1,
                                                     ),
                                                 shape: RoundedRectangleBorder(
                                                   borderRadius:
-                                                      BorderRadius.circular(2),
+                                                      BorderRadius.circular(1),
                                                 ),
                                               ),
                                               child: const Icon(
                                                 Icons.edit,
-                                                size: 8,
+                                                size: 6,
                                               ),
                                             ),
                                           ),
                                         ),
-                                        const SizedBox(width: 2),
+                                        const SizedBox(width: 1),
                                         Expanded(
                                           child: SizedBox(
-                                            height: 16,
+                                            height: 12,
                                             child: ElevatedButton(
                                               onPressed: () =>
                                                   _deleteProduct(product['id']),
@@ -1498,16 +1501,16 @@ class _ProductsTabState extends State<ProductsTab> {
                                                 backgroundColor: Colors.red,
                                                 padding:
                                                     const EdgeInsets.symmetric(
-                                                      horizontal: 2,
+                                                      horizontal: 1,
                                                     ),
                                                 shape: RoundedRectangleBorder(
                                                   borderRadius:
-                                                      BorderRadius.circular(2),
+                                                      BorderRadius.circular(1),
                                                 ),
                                               ),
                                               child: const Icon(
                                                 Icons.delete,
-                                                size: 8,
+                                                size: 6,
                                               ),
                                             ),
                                           ),

@@ -1435,37 +1435,37 @@ class _ProductsTabState extends State<ProductsTab> {
                             // Product Info - Takes remaining space
                             Expanded(
                               child: Padding(
-                                padding: const EdgeInsets.all(4),
+                                padding: const EdgeInsets.all(3),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text(
                                       product['name'] ?? 'Product',
-                                      maxLines: 2,
+                                      maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
                                         fontWeight: FontWeight.bold,
-                                        fontSize: 10,
-                                        height: 1.1,
+                                        fontSize: 9,
+                                        height: 1.0,
                                       ),
                                     ),
-                                    const SizedBox(height: 1),
                                     Text(
                                       '₱${((product['price'] is int ? (product['price'] as int).toDouble() : product['price']) ?? 0).toStringAsFixed(2)}',
                                       style: TextStyle(
                                         color: Colors.teal.shade700,
                                         fontWeight: FontWeight.bold,
-                                        fontSize: 9,
+                                        fontSize: 8,
                                       ),
                                     ),
                                     const Spacer(),
                                     // Buttons at bottom
                                     Row(
+                                      mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Expanded(
                                           child: SizedBox(
-                                            height: 18,
+                                            height: 16,
                                             child: ElevatedButton(
                                               onPressed: () => _showProductForm(
                                                 product: product,
@@ -1473,24 +1473,24 @@ class _ProductsTabState extends State<ProductsTab> {
                                               style: ElevatedButton.styleFrom(
                                                 padding:
                                                     const EdgeInsets.symmetric(
-                                                      horizontal: 4,
+                                                      horizontal: 2,
                                                     ),
                                                 shape: RoundedRectangleBorder(
                                                   borderRadius:
-                                                      BorderRadius.circular(3),
+                                                      BorderRadius.circular(2),
                                                 ),
                                               ),
                                               child: const Icon(
                                                 Icons.edit,
-                                                size: 10,
+                                                size: 8,
                                               ),
                                             ),
                                           ),
                                         ),
-                                        const SizedBox(width: 4),
+                                        const SizedBox(width: 2),
                                         Expanded(
                                           child: SizedBox(
-                                            height: 18,
+                                            height: 16,
                                             child: ElevatedButton(
                                               onPressed: () =>
                                                   _deleteProduct(product['id']),
@@ -1498,16 +1498,16 @@ class _ProductsTabState extends State<ProductsTab> {
                                                 backgroundColor: Colors.red,
                                                 padding:
                                                     const EdgeInsets.symmetric(
-                                                      horizontal: 4,
+                                                      horizontal: 2,
                                                     ),
                                                 shape: RoundedRectangleBorder(
                                                   borderRadius:
-                                                      BorderRadius.circular(3),
+                                                      BorderRadius.circular(2),
                                                 ),
                                               ),
                                               child: const Icon(
                                                 Icons.delete,
-                                                size: 10,
+                                                size: 8,
                                               ),
                                             ),
                                           ),

@@ -7,7 +7,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:pharmacy_app/main.dart';
+import 'package:panacan_pharmacy/main.dart';
 
 void main() {
   testWidgets('Pharmacy app smoke test', (WidgetTester tester) async {
